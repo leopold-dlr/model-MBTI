@@ -1,0 +1,39 @@
+# Global run settings for the MBTI/OEJTS arena.
+
+# Number of independent runs per model. The central statistic of the study is
+# the run-to-run stability of each model's type, so N should be >= a handful.
+n_runs: 10
+
+# Test language. OEJTS item text is English; keep "en" for comparability.
+language: en
+
+# Administration mode:
+#   one-shot : send all 32 items in a single request, expect one JSON reply.
+# (Item-by-item mode is intentionally not implemented -- one-shot is cheaper
+#  and avoids context drift across 32 turns.)
+mode: one-shot
+
+# Present items in a randomized order each run to blunt straight-lining /
+# positional bias. Ordering is deterministic given `seed` + model + run index,
+# so runs are reproducible. Scoring always uses item ids, never position.
+randomize_item_order: true
+
+# Base RNG seed. The per-run seed is derived deterministically from this plus
+# the model name and run index.
+seed: 42
+
+# Retry policy for malformed / refused responses. On each retry the model is
+# re-prompted with an explicit reminder of the JSON schema and the
+# "answer as yourself" instruction. After max_retries, the run is stored as
+# invalid (the refusal is itself a data point) rather than fabricating scores.
+max_retries: 3
+
+# Where raw per-run JSON is written.
+output_dir: data/runs
+
+# Where aggregated reports / dashboards are written.
+report_dir: reports
+
+# Concurrency: how many model API calls to run in parallel. Keep modest to
+# respect provider rate limits.
+max_concurrency: 4

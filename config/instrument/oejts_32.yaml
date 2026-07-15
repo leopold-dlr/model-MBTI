@@ -1,0 +1,79 @@
+# Open Extended Jungian Type Scales (OEJTS) 1.2
+#
+# A free, public-domain alternative to the proprietary MBTI instrument. The
+# OEJTS measures the same four Jungian dichotomies (E/I, S/N, T/F, J/P) using
+# 32 semantic-differential (word-pair) items rated on a 1-5 bipolar scale.
+#
+# Source of item text: Eric Jorgenson, "Open Extended Jungian Type Scales 1.2",
+# Open Psychometrics (openpsychometrics.org/tests/OEJTS/). Item orientation and
+# axis assignment follow the openjung/core normalization, where a HIGH score
+# (right anchor) always maps to the SECOND letter of the axis (I, N, T, P).
+#
+# Scale format (semantic differential):
+#   1 = strongly identifies with `left` anchor  (=> `pole_low` letter)
+#   3 = neutral / balanced
+#   5 = strongly identifies with `right` anchor (=> `pole_high` letter)
+#
+# Scoring (see src/scoring/mbti_scorer.py):
+#   For each axis, sum the item scores (each mapped toward `pole_high` using
+#   the item's `keyed` direction). Axis midpoint = 3 * n_items (= 24 here).
+#   Sum > midpoint  => pole_high letter; otherwise pole_low letter.
+#   All items in this file are `keyed: 1` (higher score => pole_high), but the
+#   scorer honors `keyed: -1` so a differently-oriented instrument can be
+#   dropped in without code changes.
+
+name: OEJTS
+version: "1.2"
+source: "https://openpsychometrics.org/tests/OEJTS/"
+scale:
+  min: 1
+  max: 5
+  # Human-readable meaning of the endpoints, injected into the prompt.
+  low_label: "strongly identifies with the LEFT statement"
+  high_label: "strongly identifies with the RIGHT statement"
+  midpoint_label: "neutral / equally balanced between the two"
+
+# Axis definitions: pole_low is the letter credited by a LOW score, pole_high
+# by a HIGH score, on an item keyed +1.
+axes:
+  EI: { pole_low: E, pole_high: I }
+  SN: { pole_low: S, pole_high: N }
+  TF: { pole_low: F, pole_high: T }
+  JP: { pole_low: J, pole_high: P }
+
+# Canonical letter order used to assemble the 4-letter type string.
+type_order: [EI, SN, TF, JP]
+
+items:
+  - { id: 1,  axis: JP, keyed: 1, left: "Makes lists",                          right: "Relies on memory" }
+  - { id: 2,  axis: TF, keyed: 1, left: "Wants to believe",                     right: "Skeptical" }
+  - { id: 3,  axis: EI, keyed: 1, left: "Bored by time alone",                  right: "Needs time alone" }
+  - { id: 4,  axis: SN, keyed: 1, left: "Accepts things as they are",           right: "Unsatisfied with the way things are" }
+  - { id: 5,  axis: JP, keyed: 1, left: "Keeps a clean room",                   right: "Just puts stuff wherever" }
+  - { id: 6,  axis: TF, keyed: 1, left: "Thinks \"robotic\" is an insult",      right: "Strives to have a mechanical mind" }
+  - { id: 7,  axis: EI, keyed: 1, left: "Energetic",                            right: "Mellow" }
+  - { id: 8,  axis: SN, keyed: 1, left: "Prefers multiple choice test",         right: "Prefers essay answers" }
+  - { id: 9,  axis: JP, keyed: 1, left: "Organized",                            right: "Chaotic" }
+  - { id: 10, axis: TF, keyed: 1, left: "Easily hurt",                          right: "Thick-skinned" }
+  - { id: 11, axis: EI, keyed: 1, left: "Works best in groups",                 right: "Works best alone" }
+  - { id: 12, axis: SN, keyed: 1, left: "Focused on the past",                  right: "Focused on the future" }
+  - { id: 13, axis: JP, keyed: 1, left: "Plans far ahead",                      right: "Plans at the last minute" }
+  - { id: 14, axis: TF, keyed: 1, left: "Wants people's love",                  right: "Wants people's respect" }
+  - { id: 15, axis: EI, keyed: 1, left: "Gets fired up by parties",            right: "Gets worn out by parties" }
+  - { id: 16, axis: SN, keyed: 1, left: "Fits in",                              right: "Stands out" }
+  - { id: 17, axis: JP, keyed: 1, left: "Commits",                              right: "Keeps options open" }
+  - { id: 18, axis: TF, keyed: 1, left: "Wants to be good at fixing people",    right: "Wants to be good at fixing things" }
+  - { id: 19, axis: EI, keyed: 1, left: "Talks more",                           right: "Listens more" }
+  - { id: 20, axis: SN, keyed: 1, left: "Describes what happened",              right: "Describes what it meant" }
+  - { id: 21, axis: JP, keyed: 1, left: "Gets work done right away",            right: "Procrastinates" }
+  - { id: 22, axis: TF, keyed: 1, left: "Follows the heart",                    right: "Follows the head" }
+  - { id: 23, axis: EI, keyed: 1, left: "Goes out on the town",                 right: "Stays at home" }
+  - { id: 24, axis: SN, keyed: 1, left: "Wants the details",                    right: "Wants the big picture" }
+  - { id: 25, axis: JP, keyed: 1, left: "Prepares",                             right: "Improvises" }
+  - { id: 26, axis: TF, keyed: 1, left: "Bases morality on compassion",         right: "Bases morality on justice" }
+  - { id: 27, axis: EI, keyed: 1, left: "Yelling comes naturally",              right: "Finds it difficult to yell loudly" }
+  - { id: 28, axis: SN, keyed: 1, left: "Empirical",                            right: "Theoretical" }
+  - { id: 29, axis: JP, keyed: 1, left: "Works hard",                           right: "Plays hard" }
+  - { id: 30, axis: TF, keyed: 1, left: "Values emotions",                      right: "Uncomfortable with emotions" }
+  - { id: 31, axis: EI, keyed: 1, left: "Likes to perform",                     right: "Avoids public speaking" }
+  - { id: 32, axis: SN, keyed: 1, left: "Likes to know \"who/what/when\"",      right: "Likes to know \"why\"" }

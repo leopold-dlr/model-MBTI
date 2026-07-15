@@ -1,0 +1,79 @@
+# Portfolio of models under test.
+#
+# Each entry is turned into a provider adapter at runtime (see
+# src/providers/registry.py). To add or remove a model, add/remove an entry
+# here -- no orchestrator code changes required.
+#
+# IMPORTANT: pin the EXACT model_id. Providers rename and retire models, so a
+# vague name like "claude" is not reproducible. The model_id below are sensible
+# defaults as of mid-2026; update them to the exact snapshot you want to test.
+#
+# Fields:
+#   name      : short unique label used in reports and run filenames
+#   provider  : key into the adapter registry (src/providers/registry.py)
+#   model_id  : exact provider-side model identifier
+#   enabled   : set false to skip a model without deleting its config
+#   params    : optional per-model generation params (max_tokens, etc.)
+#               NOTE: temperature is intentionally NOT set -- the protocol runs
+#               each model at its own default temperature (see run_settings.yaml).
+
+models:
+  - name: claude-sonnet
+    provider: anthropic
+    model_id: claude-sonnet-5
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  - name: gemini-pro
+    provider: google
+    model_id: gemini-3-pro
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  - name: gpt
+    provider: openai
+    model_id: gpt-5
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  - name: mistral-large
+    provider: mistral
+    model_id: mistral-large-latest
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  - name: grok
+    provider: xai
+    model_id: grok-4
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  - name: deepseek
+    provider: deepseek
+    model_id: deepseek-chat
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  - name: kimi
+    provider: moonshot
+    model_id: kimi-k2-0711-preview
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  - name: qwen
+    provider: qwen
+    model_id: qwen-max
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  - name: llama
+    provider: together
+    model_id: meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  - name: command-r-plus
+    provider: cohere
+    model_id: command-r-plus-08-2024
+    enabled: true
+    params: { max_tokens: 2048 }

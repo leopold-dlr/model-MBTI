@@ -1,0 +1,16 @@
+# Core (always required)
+PyYAML>=6.0
+python-dotenv>=1.0
+
+# Provider SDKs. Only the ones for the models you enable are strictly needed;
+# adapters import their SDK lazily, so a missing SDK only fails that provider.
+#
+# Most providers (Mistral, xAI, DeepSeek, Moonshot, Qwen, Together, Cohere) are
+# reached through their OpenAI-compatible endpoints, so the `openai` package
+# covers all of them.
+openai>=1.40
+anthropic>=0.40
+google-genai>=0.3
+
+# Tests (scorer + parser are network-free and unit-tested)
+pytest>=8.0
