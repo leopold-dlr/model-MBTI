@@ -2,7 +2,13 @@
 
 # Number of independent runs per model. The central statistic of the study is
 # the run-to-run stability of each model's type, so N should be >= a handful.
-n_runs: 10
+# Bumped to 20 (from 10) now that the portfolio spans 20 models across 10
+# providers with same-family size tiers (e.g. gpt-5 vs gpt-5-mini vs
+# gpt-5-nano): more runs per model both tightens the stability estimate and
+# gives a better chance of catching a model's occasional "off" answers rather
+# than one lucky/unlucky run. With 20 models x 20 runs that's 400 base calls
+# (before retries) -- lower this back down for a quick/cheap smoke test.
+n_runs: 20
 
 # Test language. OEJTS item text is English; keep "en" for comparability.
 language: en
@@ -34,6 +40,9 @@ output_dir: data/runs
 # Where aggregated reports / dashboards are written.
 report_dir: reports
 
-# Concurrency: how many model API calls to run in parallel. Keep modest to
-# respect provider rate limits.
-max_concurrency: 4
+# Concurrency: how many model API calls to run in parallel. Bumped from 4 to 8
+# since load is now spread across 10 distinct providers (each with its own
+# rate limit) rather than concentrated on a handful -- but a burst can still
+# land several calls on the same provider at once, so raise cautiously if you
+# hit 429s.
+max_concurrency: 8

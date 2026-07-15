@@ -4,9 +4,14 @@
 # src/providers/registry.py). To add or remove a model, add/remove an entry
 # here -- no orchestrator code changes required.
 #
-# IMPORTANT: pin the EXACT model_id. Providers rename and retire models, so a
-# vague name like "claude" is not reproducible. The model_id below are sensible
-# defaults as of mid-2026; update them to the exact snapshot you want to test.
+# IMPORTANT: pin the EXACT model_id. Providers rename and retire models
+# constantly (sometimes with only weeks of notice), so a vague name like
+# "claude" is not reproducible. The ids below were checked against provider
+# docs/changelogs as of 2026-07-15, but this space moves fast -- RE-VERIFY
+# every id against the provider's own model list before a real run,
+# especially the ones flagged "verify" below. A model whose API key is
+# missing is skipped automatically, so it's safe to leave an entry in even
+# if you haven't checked it yet.
 #
 # Fields:
 #   name      : short unique label used in reports and run filenames
@@ -16,64 +21,140 @@
 #   params    : optional per-model generation params (max_tokens, etc.)
 #               NOTE: temperature is intentionally NOT set -- the protocol runs
 #               each model at its own default temperature (see run_settings.yaml).
+#
+# Portfolio design: the "big" labs (Anthropic, OpenAI) get 3 size tiers each
+# (flagship / mid / small), the next tier of major providers get 2 each, so
+# that -- beyond cross-provider comparison -- we can also see whether MBTI
+# type and its run-to-run STABILITY shift with model size within the same
+# family (e.g. does a "nano" model flip type more often than its flagship?).
 
 models:
+  # ---- Anthropic (3 sizes) --------------------------------------------
+  - name: claude-opus
+    provider: anthropic
+    model_id: claude-opus-4-8
+    enabled: true
+    params: { max_tokens: 2048 }
+
   - name: claude-sonnet
     provider: anthropic
     model_id: claude-sonnet-5
     enabled: true
     params: { max_tokens: 2048 }
 
+  - name: claude-haiku
+    provider: anthropic
+    model_id: claude-haiku-4-5-20251001
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  # ---- OpenAI (3 sizes) -------------------------------------------------
+  - name: gpt-5
+    provider: openai
+    model_id: gpt-5
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  - name: gpt-5-mini
+    provider: openai
+    model_id: gpt-5-mini
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  - name: gpt-5-nano
+    provider: openai
+    model_id: gpt-5-nano
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  # ---- Google (2 sizes) --------------------------------------------------
   - name: gemini-pro
     provider: google
     model_id: gemini-3-pro
     enabled: true
     params: { max_tokens: 2048 }
 
-  - name: gpt
-    provider: openai
-    model_id: gpt-5
+  - name: gemini-flash
+    provider: google
+    model_id: gemini-3.5-flash  # verify: fast-moving Gemini 3.x line, check ai.google.dev/gemini-api/docs/models
     enabled: true
     params: { max_tokens: 2048 }
 
+  # ---- Mistral (2 sizes) --------------------------------------------------
   - name: mistral-large
     provider: mistral
     model_id: mistral-large-latest
     enabled: true
     params: { max_tokens: 2048 }
 
-  - name: grok
+  - name: mistral-small
+    provider: mistral
+    model_id: mistral-small-latest
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  # ---- xAI (2 tiers: flagship reasoning vs. fast/cheap) -------------------
+  - name: grok-4
     provider: xai
-    model_id: grok-4
+    model_id: grok-4.3  # verify: xAI retires Grok sub-versions quickly, check docs.x.ai/developers/models
     enabled: true
     params: { max_tokens: 2048 }
 
-  - name: deepseek
+  - name: grok-4-fast
+    provider: xai
+    model_id: grok-4.1-fast  # verify: same as above
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  # ---- DeepSeek (2 modes: non-thinking vs. thinking) -----------------------
+  - name: deepseek-flash
     provider: deepseek
-    model_id: deepseek-chat
+    model_id: deepseek-v4-flash  # non-thinking mode; replaces deprecated `deepseek-chat`
     enabled: true
     params: { max_tokens: 2048 }
 
-  - name: kimi
-    provider: moonshot
-    model_id: kimi-k2-0711-preview
+  - name: deepseek-pro
+    provider: deepseek
+    model_id: deepseek-v4-pro  # thinking/reasoning mode; replaces deprecated `deepseek-reasoner`
     enabled: true
-    params: { max_tokens: 2048 }
+    params: { max_tokens: 4096 }
 
-  - name: qwen
+  # ---- Alibaba Qwen (2 sizes) ----------------------------------------------
+  - name: qwen-max
     provider: qwen
     model_id: qwen-max
     enabled: true
     params: { max_tokens: 2048 }
 
-  - name: llama
+  - name: qwen-plus
+    provider: qwen
+    model_id: qwen-plus
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  # ---- Meta Llama via Together AI (2 sizes) --------------------------------
+  - name: llama-maverick
     provider: together
     model_id: meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8
     enabled: true
     params: { max_tokens: 2048 }
 
-  - name: command-r-plus
+  - name: llama-scout
+    provider: together
+    model_id: meta-llama/Llama-4-Scout-17B-16E-Instruct
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  # ---- Moonshot AI ----------------------------------------------------------
+  - name: kimi
+    provider: moonshot
+    model_id: kimi-k2.6  # the kimi-k2-0711-preview snapshot was retired 2026-05-25
+    enabled: true
+    params: { max_tokens: 2048 }
+
+  # ---- Cohere -----------------------------------------------------------
+  - name: command-a
     provider: cohere
-    model_id: command-r-plus-08-2024
+    model_id: command-a-03-2025  # verify: Cohere has since shipped Command A+; check docs.cohere.com/docs/models
     enabled: true
     params: { max_tokens: 2048 }

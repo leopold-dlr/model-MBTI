@@ -18,7 +18,7 @@ For every model in `config/models.yaml`, the pipeline:
 
 1. Sends the **OEJTS** questionnaire (32 items, one-shot, English) with a
    system prompt telling the model to answer **as itself**.
-2. Repeats this **N=10 independent runs** at the model's **default temperature**.
+2. Repeats this **N=20 independent runs** at the model's **default temperature**.
 3. Parses each strict-JSON reply, scores it into E/I · S/N · T/F · J/P letters
    with preference percentages, and stores the full raw run for auditability.
 4. Aggregates per model: modal type, **type stability**, per-axis modal letter
@@ -74,30 +74,53 @@ You only ever need to supply API keys — no code changes required to run.
 
 ---
 
-## The 10 models
+## The 20 models
 
-| # | Provider | Default `model_id` | API key env |
-|---|----------|--------------------|-------------|
-| 1 | Anthropic (Claude) | `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
-| 2 | Google (Gemini) | `gemini-3-pro` | `GOOGLE_API_KEY` |
-| 3 | OpenAI (GPT) | `gpt-5` | `OPENAI_API_KEY` |
-| 4 | Mistral | `mistral-large-latest` | `MISTRAL_API_KEY` |
-| 5 | xAI (Grok) | `grok-4` | `XAI_API_KEY` |
-| 6 | DeepSeek | `deepseek-chat` | `DEEPSEEK_API_KEY` |
-| 7 | Moonshot (Kimi) | `kimi-k2-0711-preview` | `MOONSHOT_API_KEY` |
-| 8 | Alibaba (Qwen) | `qwen-max` | `DASHSCOPE_API_KEY` / `QWEN_API_KEY` |
-| 9 | Meta (Llama, via Together) | `meta-llama/Llama-4-Maverick-…` | `TOGETHER_API_KEY` |
-| 10 | Cohere | `command-r-plus-08-2024` | `COHERE_API_KEY` |
+The two biggest labs (Anthropic, OpenAI) get **3 size tiers** each
+(flagship / mid / small); the next tier of major providers get **2** each; the
+rest get 1. Beyond cross-provider comparison, the same-family tiers let you
+check whether MBTI type and its **stability** shift with model size (e.g. does
+`gpt-5-nano` flip type across runs more often than `gpt-5`?).
 
-> **Pin exact model ids.** Providers rename and retire models; a vague "Claude"
-> is not reproducible. Each run record also stores the timestamp and the
-> model id the provider echoed back, so results stay comparable over time.
+| # | Provider | Name in config | `model_id` | API key env |
+|---|----------|-----------------|------------|--------------|
+| 1 | Anthropic | `claude-opus` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` |
+| 2 | Anthropic | `claude-sonnet` | `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
+| 3 | Anthropic | `claude-haiku` | `claude-haiku-4-5-20251001` | `ANTHROPIC_API_KEY` |
+| 4 | OpenAI | `gpt-5` | `gpt-5` | `OPENAI_API_KEY` |
+| 5 | OpenAI | `gpt-5-mini` | `gpt-5-mini` | `OPENAI_API_KEY` |
+| 6 | OpenAI | `gpt-5-nano` | `gpt-5-nano` | `OPENAI_API_KEY` |
+| 7 | Google | `gemini-pro` | `gemini-3-pro` | `GOOGLE_API_KEY` |
+| 8 | Google | `gemini-flash` | `gemini-3.5-flash` | `GOOGLE_API_KEY` |
+| 9 | Mistral | `mistral-large` | `mistral-large-latest` | `MISTRAL_API_KEY` |
+| 10 | Mistral | `mistral-small` | `mistral-small-latest` | `MISTRAL_API_KEY` |
+| 11 | xAI | `grok-4` | `grok-4.3` | `XAI_API_KEY` |
+| 12 | xAI | `grok-4-fast` | `grok-4.1-fast` | `XAI_API_KEY` |
+| 13 | DeepSeek | `deepseek-flash` | `deepseek-v4-flash` (non-thinking) | `DEEPSEEK_API_KEY` |
+| 14 | DeepSeek | `deepseek-pro` | `deepseek-v4-pro` (thinking) | `DEEPSEEK_API_KEY` |
+| 15 | Alibaba | `qwen-max` | `qwen-max` | `DASHSCOPE_API_KEY` / `QWEN_API_KEY` |
+| 16 | Alibaba | `qwen-plus` | `qwen-plus` | `DASHSCOPE_API_KEY` / `QWEN_API_KEY` |
+| 17 | Meta (via Together) | `llama-maverick` | `meta-llama/Llama-4-Maverick-…` | `TOGETHER_API_KEY` |
+| 18 | Meta (via Together) | `llama-scout` | `meta-llama/Llama-4-Scout-…` | `TOGETHER_API_KEY` |
+| 19 | Moonshot | `kimi` | `kimi-k2.6` | `MOONSHOT_API_KEY` |
+| 20 | Cohere | `command-a` | `command-a-03-2025` | `COHERE_API_KEY` |
+
+> **Pin exact model ids, and re-verify them.** Providers rename and retire
+> models on the order of weeks, not years — several ids above already replace
+> ones that were retired mid-2026 (e.g. Kimi's `kimi-k2-0711-preview`,
+> DeepSeek's `deepseek-chat`/`deepseek-reasoner`). `config/models.yaml` flags
+> the entries worth double-checking against the provider's own model list
+> right before a real run (`# verify:` comments). Each run record also stores
+> the timestamp and the model id the provider echoed back, so results stay
+> comparable over time even as the roster drifts.
 
 A model whose API key is missing is **skipped with a warning** — you can run
-just the subset you have keys for. Most providers are reached through their
-OpenAI-compatible endpoints, so a single `openai` client covers Mistral, xAI,
-DeepSeek, Moonshot, Qwen, Together and Cohere; Anthropic and Google use their
-native SDKs.
+just the subset you have keys for. No new env vars are needed versus a
+10-model run: adding a same-provider tier only adds a `models.yaml` entry, not
+a new key. Most providers are reached through their OpenAI-compatible
+endpoints, so a single `openai` client covers Mistral, xAI, DeepSeek,
+Moonshot, Qwen, Together and Cohere; Anthropic and Google use their native
+SDKs.
 
 ---
 
@@ -149,7 +172,7 @@ main.py                  # CLI
   role-play drift and makes parsing reliable.
 - **One-shot.** All 32 items in a single request per run — cheaper, and avoids
   context drift over 32 turns.
-- **N=10 runs at default temperature.** The headline statistic is run-to-run
+- **N=20 runs at default temperature.** The headline statistic is run-to-run
   **stability**: a model that keeps the same type (low variance) vs. one that
   "changes personality" between runs (high variance) is itself a result.
 - **Randomized item order** (deterministic per run seed) to blunt straight-lining;
@@ -198,7 +221,9 @@ Read these before drawing conclusions:
 ### Cost & re-runs
 
 There is no hard request cap; token usage is captured per run in the raw JSON so
-you can monitor spend (10 models × 10 runs ≈ 100+ calls plus any retries). Runs
+you can monitor spend (20 models × 20 runs = 400 base calls, more with
+retries). Lower `n_runs` in `config/run_settings.yaml` for a cheap smoke test
+before committing to a full run. Runs
 are timestamped and versioned, so the same command can be re-executed later to
 track how models drift over time — no code changes needed.
 
