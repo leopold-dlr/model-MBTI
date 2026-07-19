@@ -171,6 +171,7 @@ class ModelStats:
     pct_first_attempt: float                   # share of valid runs answered with no retry
     axes: dict[str, AxisStats] = field(default_factory=dict)
     invalid_reasons: list[str] = field(default_factory=list)
+    example_items: list[dict] = field(default_factory=list)  # see item_level_examples()
 
     def to_dict(self) -> dict:
         return {
@@ -182,6 +183,7 @@ class ModelStats:
             "n_total": self.n_total,
             "n_valid": self.n_valid,
             "n_invalid": self.n_invalid,
+            "example_items": self.example_items,
             "modal_type": self.modal_type,
             "modal_type_freq": round(self.modal_type_freq, 4),
             "modal_type_freq_ci": [round(v, 4) for v in self.modal_type_freq_ci],
@@ -222,6 +224,88 @@ def _axis_item_matrix(
         else:
             matrix.append(row)
     return matrix
+
+
+def _describe_item_lean(left: str, right: str, toward_right: bool) -> str:
+    """A human-readable phrase for which way an item leaned.
+
+    Detects the "same base statement, different accuracy qualifier" pattern
+    used to administer unipolar Likert instruments (e.g. IPIP-50) through
+    this project's bipolar left/right schema (see ipip50_bigfive.yaml's
+    header comment: "<qualifier>: <statement>", same statement on both
+    sides) by comparing the text after the first ": " -- NOT a raw
+    common-suffix match, which is fooled by "inaccurate" containing
+    "accurate" as a substring and would chop the qualifier itself into the
+    "shared" text. Phrases the unipolar case as a single accuracy judgment
+    ("called X accurate of itself") rather than a confusing choice between
+    two near-identical-looking strings.
+    """
+    left_head, _, left_rest = left.partition(": ")
+    right_head, _, right_rest = right.partition(": ")
+    if left_rest and right_rest and left_rest == right_rest:
+        statement = left_rest.strip().rstrip(".").strip()
+        verdict = "accurate" if toward_right else "inaccurate"
+        return f'called "{statement}" **{verdict}** of itself'
+    chosen = right if toward_right else left
+    other = left if toward_right else right
+    return f'leaned toward **"{chosen}"** over "{other}"'
+
+
+def item_level_examples(
+    inst: Instrument, valid_records: list[dict], n: int = 3
+) -> list[dict]:
+    """The model's most decisive and consistent individual answers -- concrete
+    grounding for "what did the model actually say", not just aggregate axis
+    stats. For each item, compute the oriented score (toward the item's
+    canonical RIGHT anchor, honoring each run's own polarity flip so a
+    flipped-this-run answer is comparable to an unflipped one) across valid
+    runs, then rank items by how decisive (far from the midpoint) AND
+    consistent (low spread) the answer was, descending.
+    """
+    if not valid_records:
+        return []
+    midpoint = inst.scale_midpoint
+    span = inst.scale_max - inst.scale_min
+    scored: list[dict] = []
+    for it in inst.items:
+        oriented: list[float] = []
+        for r in valid_records:
+            answers = r.get("answers")
+            if not answers:
+                continue
+            raw = answers.get(str(it.id))
+            if raw is None:
+                continue
+            flipped = r.get("item_polarity", {}).get(str(it.id)) == -1
+            oriented.append(float((inst.scale_min + inst.scale_max - raw) if flipped else raw))
+        if not oriented:
+            continue
+        mean = statistics.fmean(oriented)
+        std = _std(oriented)
+        decisiveness = abs(mean - midpoint) / (span / 2) * 100  # 0-100
+        toward_right = mean > midpoint
+        pct = (
+            100.0 * (mean - inst.scale_min) / span if span else 50.0
+        )
+        scored.append(
+            {
+                "item_id": it.id,
+                "axis": it.axis,
+                "left": it.left,
+                "right": it.right,
+                "leans_toward": it.right if toward_right else it.left,
+                "other_side": it.left if toward_right else it.right,
+                "phrase": _describe_item_lean(it.left, it.right, toward_right),
+                "pct": round(pct if toward_right else 100 - pct, 1),
+                "mean": round(mean, 2),
+                "std": round(std, 2),
+                "n": len(oriented),
+                # Higher = clearer signal: far from the midpoint AND low spread.
+                "salience": round(decisiveness - std * 15, 2),
+            }
+        )
+    scored.sort(key=lambda d: d["salience"], reverse=True)
+    return scored[:n]
 
 
 def aggregate_group(
@@ -294,6 +378,8 @@ def aggregate_group(
                 cronbach_alpha=alpha,
             )
 
+    examples = item_level_examples(inst, valid) if inst is not None else []
+
     return ModelStats(
         model_name=model_name,
         provider=provider,
@@ -311,6 +397,7 @@ def aggregate_group(
         pct_first_attempt=pct_first_attempt,
         axes=axes,
         invalid_reasons=[r.get("invalid_reason", "unknown") for r in invalid],
+        example_items=examples,
     )
 
 

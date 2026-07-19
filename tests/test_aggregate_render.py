@@ -6,9 +6,11 @@ from src.instrument import load_instrument
 from src.report.aggregate import (
     aggregate_all,
     cronbach_alpha,
+    item_level_examples,
     random_baseline_stats,
     wilson_ci,
 )
+from src.report.aggregate import _describe_item_lean
 from src.report.render import render_csv, render_dashboard, render_markdown, render_paper
 from src.scoring.mbti_scorer import score_answers
 
@@ -178,11 +180,50 @@ def test_paper_explains_missing_comparison_when_all_models_unreliable():
     assert "min_valid_runs" in paper
 
 
-def test_plain_language_summary_present_in_markdown():
+def test_personality_profile_and_examples_present_in_markdown():
     inst = load_instrument(INSTRUMENT)
     stats = aggregate_all(_synthetic_records(), inst=inst)
     md = render_markdown(stats, inst.type_order)
-    assert "In plain terms" in md
+    assert "## Personality profiles" in md
+    assert "comes across as" in md
+    assert "## Comparison table" in md
+    assert "## Technical detail" in md
+    # A model with valid runs must show at least one concrete item example.
+    assert "leaned toward" in md or "called" in md
+
+
+def test_describe_item_lean_handles_genuinely_bipolar_items():
+    phrase = _describe_item_lean("Wants the details", "Wants the big picture", toward_right=True)
+    assert "Wants the big picture" in phrase
+    assert "Wants the details" in phrase
+
+
+def test_describe_item_lean_collapses_ipip_style_unipolar_wrapper():
+    # IPIP-50 items are encoded as the SAME base statement under an
+    # "inaccurate"/"accurate" qualifier (see ipip50_bigfive.yaml's header) --
+    # this must not read as a choice between two near-identical strings, and
+    # must not leak a leftover "accurate description of me:" fragment (a
+    # naive common-suffix match is fooled by "inaccurate" containing
+    # "accurate" as a substring).
+    left = "Very inaccurate description of me: Feel little concern for others."
+    right = "Very accurate description of me: Feel little concern for others."
+    phrase = _describe_item_lean(left, right, toward_right=False)
+    assert phrase == 'called "Feel little concern for others" **inaccurate** of itself'
+
+
+def test_item_level_examples_picks_decisive_and_consistent_items():
+    inst = load_instrument(INSTRUMENT)
+    # Every run identical and maximally extreme -> every item is equally
+    # decisive and consistent; just check the function returns well-formed,
+    # complete examples rather than crashing or returning partial data.
+    ext = {it.id: 5 for it in inst.items}
+    records = [_make_record("m", ext, run_index=i) for i in range(3)]
+    valid = [r for r in records if r["valid"]]
+    examples = item_level_examples(inst, valid, n=3)
+    assert len(examples) == 3
+    for ex in examples:
+        assert set(ex) >= {"item_id", "axis", "phrase", "pct", "n"}
+        assert ex["n"] == 3
 
 
 def test_paper_and_markdown_describe_the_actual_instrument_used():
