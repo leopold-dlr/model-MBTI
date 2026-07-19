@@ -73,6 +73,12 @@ def render_markdown(
         f"runs across {len({s.model_name for s in stats})} models, "
         f"{len(groups)} condition(s)._",
         "",
+        "**In plain terms:** for each model below, which 4-letter type it landed on, "
+        "how often it repeated that same type across independent runs, and whether "
+        "that's actually more consistent than a purely random answer pattern would be. "
+        "See \"In plain terms\" under each model for a one-line read; the table and the "
+        "bullets below it are the detail behind that line.",
+        "",
         "Stability = share of valid runs landing on the model's modal type/letter, "
         "with a 95% Wilson confidence interval in brackets -- at N<=20 runs, do not "
         "read small differences between models as meaningful without checking "
@@ -150,25 +156,32 @@ def render_markdown(
                 "" if s.reliable else f" — **below min_valid_runs threshold, treat with caution**"
             )
             lines += [
+                f"**In plain terms:** {_plain_summary(s)}",
+                "",
                 f"- Modal type: **{s.modal_type}** (stable in {s.modal_type_freq*100:.0f}% "
                 f"of runs, 95% CI {_fmt_ci(s.modal_type_freq_ci)}){reliability_note}",
                 f"- Valid runs: {s.n_valid}/{s.n_total}"
                 + (f" ({s.n_invalid} invalid)" if s.n_invalid else ""),
                 f"- Answered without any retry: {s.pct_first_attempt*100:.0f}% of valid runs",
                 f"- Types observed: {_fmt_counts(s.type_counts)}",
+                "",
+            ]
+            axis_rows = [
+                "| Axis | Letter (stability, 95% CI) | Mean preference | Dispersion (σ) | Distance from midpoint | Cronbach α |",
+                "|---|---|---|---|---|---|",
             ]
             for axis in axes_order:
                 a = s.axes.get(axis)
                 if a is None:
                     continue
                 alpha_str = f"{a.cronbach_alpha:.2f}" if a.cronbach_alpha is not None else "n/a"
-                lines.append(
-                    f"- {axis}: modal **{a.modal_letter}** "
-                    f"({a.modal_freq*100:.0f}% of runs, CI {_fmt_ci(a.modal_freq_ci)}); "
-                    f"mean pref toward {a.pole_high}={a.mean_pct_high:.0f}% "
-                    f"(σ={a.std_pct_high:.1f}, distance from midpoint={a.dist_from_midpoint:.0f}pt); "
-                    f"Cronbach α={alpha_str}; letters {_fmt_counts(a.letter_counts)}"
+                axis_rows.append(
+                    f"| {axis} | **{a.modal_letter}** ({a.modal_freq*100:.0f}%, "
+                    f"{_fmt_ci(a.modal_freq_ci)}) | {a.pole_high}={a.mean_pct_high:.0f}% "
+                    f"| {a.std_pct_high:.1f} | {a.dist_from_midpoint:.0f}pt | {alpha_str} |"
                 )
+            lines += axis_rows
+            lines.append("")
             if s.n_invalid:
                 lines.append(_invalid_summary(s))
             lines.append("")
@@ -186,6 +199,27 @@ def render_markdown(
         "",
     ]
     return "\n".join(lines)
+
+
+def _plain_summary(s: ModelStats) -> str:
+    """One plain-English sentence summarizing a model's result, meant to be
+    readable without knowing what a Wilson CI or Cronbach's alpha is. The
+    detailed stats immediately below back it up; this is the fast read."""
+    n = s.n_valid
+    if s.modal_type_freq == 1.0:
+        consistency = f"answered **{s.modal_type}** in all {n} of its valid runs"
+    else:
+        consistency = (
+            f"answered **{s.modal_type}** most often ({s.modal_type_freq*100:.0f}% of its "
+            f"{n} valid runs), but landed on a different type the rest of the time"
+        )
+    if not s.reliable:
+        caveat = f" — only {n} runs so far, too few to call this a stable trait yet."
+    elif s.modal_type_freq == 1.0:
+        caveat = " — consistent across every run in this test."
+    else:
+        caveat = " — check the confidence interval before treating this as \"the\" type."
+    return f"`{s.model_name}` {consistency}{caveat}"
 
 
 def _fmt_counts(counts: dict) -> str:
@@ -364,6 +398,15 @@ def render_paper(
             "their confidence intervals actually overlap -- at N<=20 runs they "
             "often do.",
             "- TODO: discuss provider/family clustering and any size effects.",
+            "",
+        ]
+    else:
+        lines += [
+            f"_No comparison shown: every model in condition `{primary_label}` is "
+            f"below `min_valid_runs` ({len(excluded)} model(s): "
+            f"{', '.join(s.model_name for s in excluded) or 'none with valid runs at all'}). "
+            "This is expected for a small smoke test (e.g. n_runs=2) -- raise `n_runs` "
+            "and re-run before drawing any most/least-stable conclusion._",
             "",
         ]
     lines += [

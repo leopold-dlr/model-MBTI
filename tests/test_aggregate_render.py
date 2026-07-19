@@ -162,6 +162,27 @@ def test_random_baseline_stats_shape():
     assert set(baseline["axes"]) == set(inst.type_order)
 
 
+def test_paper_explains_missing_comparison_when_all_models_unreliable():
+    """Regression test: when every model in the primary condition is below
+    min_valid_runs (e.g. a small smoke test), '## 3. Cross-model comparison'
+    used to render as a bare header with nothing under it -- silently. It
+    must instead say why no comparison is shown."""
+    inst = load_instrument(INSTRUMENT)
+    records = _synthetic_records()  # 5/4 valid runs, well below a high threshold
+    stats = aggregate_all(records, inst=inst, min_valid_runs=1000)
+    assert all(not s.reliable for s in stats if s.n_valid > 0)
+    paper = render_paper(stats, inst.type_order)
+    assert "No comparison shown" in paper
+    assert "min_valid_runs" in paper
+
+
+def test_plain_language_summary_present_in_markdown():
+    inst = load_instrument(INSTRUMENT)
+    stats = aggregate_all(_synthetic_records(), inst=inst)
+    md = render_markdown(stats, inst.type_order)
+    assert "In plain terms" in md
+
+
 def test_renders_do_not_crash():
     inst = load_instrument(INSTRUMENT)
     stats = aggregate_all(_synthetic_records(), inst=inst)
