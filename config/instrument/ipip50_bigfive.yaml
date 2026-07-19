@@ -1,0 +1,125 @@
+# IPIP-50 Big Five Factor Markers
+#
+# Source of item text and keying: the official IPIP website's own
+# administration guide, "Administering IPIP Measures, with a 50-item Sample
+# Questionnaire" (https://ipip.ori.org/New_IPIP-50-item-scale.htm) and
+# "Scoring Instructions" (https://ipip.ori.org/newScoringInstructions.htm),
+# both supplied verbatim by the project maintainer in
+# https://github.com/leopold-dlr/model-MBTI (this repo). Item text and +/-
+# keying below are transcribed unchanged from that source and were NOT
+# reconstructed from memory (see the git history of this file / the PR
+# discussion for why an earlier attempt shipped an intentionally empty
+# scaffold instead of guessed-from-memory content).
+#
+# Underlying scale markers: Goldberg, L. R. (1992). The development of
+# markers for the Big-Five factor structure. Psychological Assessment, 4,
+# 26-42. IPIP items are public domain (International Personality Item Pool,
+# ipip.ori.org): "one can copy, edit, translate, or use them for any purpose
+# without asking permission and without paying a fee."
+#
+# SCHEMA ADAPTATION (unipolar Likert -> this project's bipolar left/right UI)
+# ------------------------------------------------------------------------
+# Unlike OEJTS, IPIP-50 items are single unipolar statements ("Am the life
+# of the party") rated 1 (Very Inaccurate) to 5 (Very Accurate) -- not a
+# choice between two different statements. To administer them through the
+# existing prompt/scoring code unchanged (this project's `left`/`right`/
+# `keyed` schema, built for OEJTS's bipolar pairs), each item is encoded as
+# the SAME statement under both anchors, qualified by accuracy:
+#   left  = "Very inaccurate description of me: <statement>"
+#   right = "Very accurate description of me: <statement>"
+# This preserves the exact 1-5 accuracy scale from the source (1=Very
+# Inaccurate ... 5=Very Accurate) with no semantic change -- it is a display
+# wrapper, not a reinterpretation of the item. `keyed` below is copied
+# directly from the source's own "+"/"-" per item (see Scoring Instructions:
+# for +keyed items, Very Accurate=5 contributes toward the trait's high pole;
+# for -keyed items, the response is reversed before summing -- exactly the
+# semantics already implemented by src/scoring/mbti_scorer.py for
+# `keyed: -1`).
+#
+# ON THE "TYPE" STRING FOR THIS INSTRUMENT
+# ------------------------------------------------------------------------
+# The existing scorer concatenates each axis's dominant letter into a single
+# "type" string (borrowed from Jungian/MBTI theory, where dichotomies are the
+# whole point). The Big Five is explicitly a **dimensional**, not
+# **typological**, model -- there is no theoretical "type" to land on, only
+# five independent continuous traits. `pole_low`/`pole_high` below are
+# therefore deliberately generic ("Lo"/"Hi") rather than trait-flavored
+# letters, so the resulting "type" string (e.g. "HiLoHiLoHi") doesn't imply a
+# false Jungian-style dichotomy. For this instrument even more than for
+# OEJTS, the per-axis continuous mean preference (`mean_pct_high`), its CI,
+# and Cronbach's alpha are the primary readout -- not the concatenated
+# string. See the project README's reporting-language guidance.
+
+name: IPIP-50-BigFive
+version: "1.0"
+source: "https://ipip.ori.org/New_IPIP-50-item-scale.htm ; https://ipip.ori.org/newScoringInstructions.htm ; Goldberg (1992), Psychological Assessment, 4, 26-42. Public domain (IPIP)."
+scale:
+  min: 1
+  max: 5
+  low_label: "the LEFT statement is a very INACCURATE description of you"
+  high_label: "the RIGHT statement is a very ACCURATE description of you"
+  midpoint_label: "neither accurate nor inaccurate as a description of you"
+
+# Factor I=Extraversion, II=Agreeableness, III=Conscientiousness,
+# IV=Emotional Stability, V=Intellect/Imagination (source's own labels).
+# pole_low/pole_high are intentionally generic -- see header note above.
+axes:
+  EXTR: { pole_low: Lo, pole_high: Hi }
+  AGRE: { pole_low: Lo, pole_high: Hi }
+  CONS: { pole_low: Lo, pole_high: Hi }
+  STAB: { pole_low: Lo, pole_high: Hi }
+  INTL: { pole_low: Lo, pole_high: Hi }
+
+type_order: [EXTR, AGRE, CONS, STAB, INTL]
+
+items:
+  - { id: 1 , axis: EXTR, keyed:  1, left: 'Very inaccurate description of me: Am the life of the party.', right: 'Very accurate description of me: Am the life of the party.' }
+  - { id: 2 , axis: AGRE, keyed: -1, left: 'Very inaccurate description of me: Feel little concern for others.', right: 'Very accurate description of me: Feel little concern for others.' }
+  - { id: 3 , axis: CONS, keyed:  1, left: 'Very inaccurate description of me: Am always prepared.', right: 'Very accurate description of me: Am always prepared.' }
+  - { id: 4 , axis: STAB, keyed: -1, left: 'Very inaccurate description of me: Get stressed out easily.', right: 'Very accurate description of me: Get stressed out easily.' }
+  - { id: 5 , axis: INTL, keyed:  1, left: 'Very inaccurate description of me: Have a rich vocabulary.', right: 'Very accurate description of me: Have a rich vocabulary.' }
+  - { id: 6 , axis: EXTR, keyed: -1, left: 'Very inaccurate description of me: Don''t talk a lot.', right: 'Very accurate description of me: Don''t talk a lot.' }
+  - { id: 7 , axis: AGRE, keyed:  1, left: 'Very inaccurate description of me: Am interested in people.', right: 'Very accurate description of me: Am interested in people.' }
+  - { id: 8 , axis: CONS, keyed: -1, left: 'Very inaccurate description of me: Leave my belongings around.', right: 'Very accurate description of me: Leave my belongings around.' }
+  - { id: 9 , axis: STAB, keyed:  1, left: 'Very inaccurate description of me: Am relaxed most of the time.', right: 'Very accurate description of me: Am relaxed most of the time.' }
+  - { id: 10, axis: INTL, keyed: -1, left: 'Very inaccurate description of me: Have difficulty understanding abstract ideas.', right: 'Very accurate description of me: Have difficulty understanding abstract ideas.' }
+  - { id: 11, axis: EXTR, keyed:  1, left: 'Very inaccurate description of me: Feel comfortable around people.', right: 'Very accurate description of me: Feel comfortable around people.' }
+  - { id: 12, axis: AGRE, keyed: -1, left: 'Very inaccurate description of me: Insult people.', right: 'Very accurate description of me: Insult people.' }
+  - { id: 13, axis: CONS, keyed:  1, left: 'Very inaccurate description of me: Pay attention to details.', right: 'Very accurate description of me: Pay attention to details.' }
+  - { id: 14, axis: STAB, keyed: -1, left: 'Very inaccurate description of me: Worry about things.', right: 'Very accurate description of me: Worry about things.' }
+  - { id: 15, axis: INTL, keyed:  1, left: 'Very inaccurate description of me: Have a vivid imagination.', right: 'Very accurate description of me: Have a vivid imagination.' }
+  - { id: 16, axis: EXTR, keyed: -1, left: 'Very inaccurate description of me: Keep in the background.', right: 'Very accurate description of me: Keep in the background.' }
+  - { id: 17, axis: AGRE, keyed:  1, left: 'Very inaccurate description of me: Sympathize with others'' feelings.', right: 'Very accurate description of me: Sympathize with others'' feelings.' }
+  - { id: 18, axis: CONS, keyed: -1, left: 'Very inaccurate description of me: Make a mess of things.', right: 'Very accurate description of me: Make a mess of things.' }
+  - { id: 19, axis: STAB, keyed:  1, left: 'Very inaccurate description of me: Seldom feel blue.', right: 'Very accurate description of me: Seldom feel blue.' }
+  - { id: 20, axis: INTL, keyed: -1, left: 'Very inaccurate description of me: Am not interested in abstract ideas.', right: 'Very accurate description of me: Am not interested in abstract ideas.' }
+  - { id: 21, axis: EXTR, keyed:  1, left: 'Very inaccurate description of me: Start conversations.', right: 'Very accurate description of me: Start conversations.' }
+  - { id: 22, axis: AGRE, keyed: -1, left: 'Very inaccurate description of me: Am not interested in other people''s problems.', right: 'Very accurate description of me: Am not interested in other people''s problems.' }
+  - { id: 23, axis: CONS, keyed:  1, left: 'Very inaccurate description of me: Get chores done right away.', right: 'Very accurate description of me: Get chores done right away.' }
+  - { id: 24, axis: STAB, keyed: -1, left: 'Very inaccurate description of me: Am easily disturbed.', right: 'Very accurate description of me: Am easily disturbed.' }
+  - { id: 25, axis: INTL, keyed:  1, left: 'Very inaccurate description of me: Have excellent ideas.', right: 'Very accurate description of me: Have excellent ideas.' }
+  - { id: 26, axis: EXTR, keyed: -1, left: 'Very inaccurate description of me: Have little to say.', right: 'Very accurate description of me: Have little to say.' }
+  - { id: 27, axis: AGRE, keyed:  1, left: 'Very inaccurate description of me: Have a soft heart.', right: 'Very accurate description of me: Have a soft heart.' }
+  - { id: 28, axis: CONS, keyed: -1, left: 'Very inaccurate description of me: Often forget to put things back in their proper place.', right: 'Very accurate description of me: Often forget to put things back in their proper place.' }
+  - { id: 29, axis: STAB, keyed: -1, left: 'Very inaccurate description of me: Get upset easily.', right: 'Very accurate description of me: Get upset easily.' }
+  - { id: 30, axis: INTL, keyed: -1, left: 'Very inaccurate description of me: Do not have a good imagination.', right: 'Very accurate description of me: Do not have a good imagination.' }
+  - { id: 31, axis: EXTR, keyed:  1, left: 'Very inaccurate description of me: Talk to a lot of different people at parties.', right: 'Very accurate description of me: Talk to a lot of different people at parties.' }
+  - { id: 32, axis: AGRE, keyed: -1, left: 'Very inaccurate description of me: Am not really interested in others.', right: 'Very accurate description of me: Am not really interested in others.' }
+  - { id: 33, axis: CONS, keyed:  1, left: 'Very inaccurate description of me: Like order.', right: 'Very accurate description of me: Like order.' }
+  - { id: 34, axis: STAB, keyed: -1, left: 'Very inaccurate description of me: Change my mood a lot.', right: 'Very accurate description of me: Change my mood a lot.' }
+  - { id: 35, axis: INTL, keyed:  1, left: 'Very inaccurate description of me: Am quick to understand things.', right: 'Very accurate description of me: Am quick to understand things.' }
+  - { id: 36, axis: EXTR, keyed: -1, left: 'Very inaccurate description of me: Don''t like to draw attention to myself.', right: 'Very accurate description of me: Don''t like to draw attention to myself.' }
+  - { id: 37, axis: AGRE, keyed:  1, left: 'Very inaccurate description of me: Take time out for others.', right: 'Very accurate description of me: Take time out for others.' }
+  - { id: 38, axis: CONS, keyed: -1, left: 'Very inaccurate description of me: Shirk my duties.', right: 'Very accurate description of me: Shirk my duties.' }
+  - { id: 39, axis: STAB, keyed: -1, left: 'Very inaccurate description of me: Have frequent mood swings.', right: 'Very accurate description of me: Have frequent mood swings.' }
+  - { id: 40, axis: INTL, keyed:  1, left: 'Very inaccurate description of me: Use difficult words.', right: 'Very accurate description of me: Use difficult words.' }
+  - { id: 41, axis: EXTR, keyed:  1, left: 'Very inaccurate description of me: Don''t mind being the center of attention.', right: 'Very accurate description of me: Don''t mind being the center of attention.' }
+  - { id: 42, axis: AGRE, keyed:  1, left: 'Very inaccurate description of me: Feel others'' emotions.', right: 'Very accurate description of me: Feel others'' emotions.' }
+  - { id: 43, axis: CONS, keyed:  1, left: 'Very inaccurate description of me: Follow a schedule.', right: 'Very accurate description of me: Follow a schedule.' }
+  - { id: 44, axis: STAB, keyed: -1, left: 'Very inaccurate description of me: Get irritated easily.', right: 'Very accurate description of me: Get irritated easily.' }
+  - { id: 45, axis: INTL, keyed:  1, left: 'Very inaccurate description of me: Spend time reflecting on things.', right: 'Very accurate description of me: Spend time reflecting on things.' }
+  - { id: 46, axis: EXTR, keyed: -1, left: 'Very inaccurate description of me: Am quiet around strangers.', right: 'Very accurate description of me: Am quiet around strangers.' }
+  - { id: 47, axis: AGRE, keyed:  1, left: 'Very inaccurate description of me: Make people feel at ease.', right: 'Very accurate description of me: Make people feel at ease.' }
+  - { id: 48, axis: CONS, keyed:  1, left: 'Very inaccurate description of me: Am exacting in my work.', right: 'Very accurate description of me: Am exacting in my work.' }
+  - { id: 49, axis: STAB, keyed: -1, left: 'Very inaccurate description of me: Often feel blue.', right: 'Very accurate description of me: Often feel blue.' }
+  - { id: 50, axis: INTL, keyed:  1, left: 'Very inaccurate description of me: Am full of ideas.', right: 'Very accurate description of me: Am full of ideas.' }

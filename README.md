@@ -168,7 +168,7 @@ config/
   models.yaml            # portfolio: provider, model_id, params (pinned)
   run_settings.yaml      # N runs, conditions, seed, retries, concurrency
   instrument/oejts_32.yaml   # the 32 items, axis + direction (data, not code)
-  instrument/ipip50_bigfive_SCAFFOLD.yaml  # 2nd-instrument scaffold, NOT populated (see file header)
+  instrument/ipip50_bigfive.yaml  # 2nd instrument: IPIP-50 Big Five, for convergent validity
 src/
   config.py              # load models + run settings
   instrument.py          # load + validate an instrument
@@ -197,7 +197,8 @@ main.py                  # CLI
 - **One adapter per provider behind a common interface** — adding a model is
   adding a config line (and an adapter file only for a genuinely new API shape).
 - **The instrument is data.** Swap OEJTS for another questionnaire via YAML —
-  see the (intentionally unpopulated) IPIP scaffold for what that takes.
+  `config/instrument/ipip50_bigfive.yaml` (Big Five, for convergent validity)
+  is a second one included, requiring zero runner/scorer changes.
 - **Every raw run is stored in full** — both prompts sent on *every* attempt
   (not just the successful one), raw reply, parsed answers, score, usage — so
   scoring can be replayed and refusals stay auditable.
@@ -278,15 +279,15 @@ Read these before drawing conclusions:
   **opt-in** (disabled by default to keep the base run's cost fixed) —
   results from a single default wording in English should not be treated as
   wording-invariant unless you've actually run the ablation.
-- **No independent (e.g. Big Five) instrument is included yet.** A second,
-  differently-normed instrument would let you check convergent validity
-  (do OEJTS "I" and an independent Extraversion score actually correlate?).
-  `config/instrument/ipip50_bigfive_SCAFFOLD.yaml` documents the intended
-  schema but ships with **zero items on purpose**: the canonical IPIP-50 item
-  text could not be safely verified against a live source in the environment
-  this was built in, and shipping guessed-from-memory psychometric item text
-  under the IPIP name would be worse than shipping nothing. Populate it from
-  [ipip.ori.org](https://ipip.ori.org/) before use.
+- **A second instrument (IPIP-50 Big Five) is included, but running it is a
+  separate, independent experiment**, not something `main.py run` does
+  automatically alongside OEJTS: `python main.py --instrument
+  config/instrument/ipip50_bigfive.yaml run`. Comparing the two (e.g. does
+  OEJTS "I" correlate with low IPIP Extraversion?) is a manual analysis step
+  on the two experiments' outputs, not yet automated. The Big Five is a
+  **dimensional**, not typological, model — its per-item "type" string is
+  not a meaningful headline result (see the instrument file's own header
+  comment); its continuous per-axis scores are.
 - Even with Wilson CIs and a random-responder baseline, **N=20 runs per
   condition is still modest** — many pairwise model comparisons will have
   overlapping confidence intervals. Raise `n_runs` (cost scales linearly) if
@@ -332,7 +333,8 @@ python -m pytest -q
 ```
 
 The scorer (incl. polarity overrides), parser, instrument loader (incl. the
-empty-scaffold rejection), prompt templates (incl. flip-map determinism and
+empty-instrument rejection, and the IPIP-50 instrument's item/axis/keying
+counts), prompt templates (incl. flip-map determinism and
 prompt variants), orchestrator (incl. a cross-process seed-determinism
 regression test and `--only` matching), and report aggregation (incl. Wilson
 CIs, Cronbach's alpha, experiment/condition grouping, and the CSV/dashboard
