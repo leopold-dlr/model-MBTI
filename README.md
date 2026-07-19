@@ -147,6 +147,17 @@ endpoints, so a single `openai` client covers Mistral, xAI, DeepSeek,
 Moonshot, Qwen, Together and Cohere; Anthropic and Google use their native
 SDKs.
 
+> **One key instead of ten — OpenRouter.** If you'd rather not collect ten
+> API keys, `config/models_openrouter.yaml` routes the same 20-model
+> portfolio through [OpenRouter](https://openrouter.ai) with a single
+> `OPENROUTER_API_KEY`:
+> `python main.py --models config/models_openrouter.yaml run`.
+> **Verify the slugs against openrouter.ai/models first** (see that file's
+> header), and don't mix OpenRouter runs and direct-API runs in the same
+> experiment — the intermediary is a change of measurement conditions, and
+> each run's `returned_model` field is there to audit what actually
+> answered.
+
 > **Reasoning-capable models need a bigger token budget, and OpenAI's newer
 > models need a different parameter name.** `gpt-5`/`gpt-5-mini`,
 > `gemini-3-pro` and `grok-4.3` all spend part of their output budget on

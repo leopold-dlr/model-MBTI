@@ -17,6 +17,7 @@ from .google_provider import GoogleAdapter
 from .mistral_provider import MistralAdapter
 from .moonshot_provider import MoonshotAdapter
 from .openai_provider import OpenAIAdapter
+from .openrouter_provider import OpenRouterAdapter
 from .qwen_provider import QwenAdapter
 from .together_provider import TogetherAdapter
 from .xai_provider import XAIAdapter
@@ -32,6 +33,7 @@ REGISTRY: dict[str, type[ProviderAdapter]] = {
     "qwen": QwenAdapter,
     "together": TogetherAdapter,
     "cohere": CohereAdapter,
+    "openrouter": OpenRouterAdapter,
 }
 
 

@@ -59,6 +59,26 @@ def test_matches_only_exact_and_prefix():
     assert not _matches_only("claude-opus", ["gpt"])
 
 
+def test_openrouter_adapter_registered_and_configured():
+    from src.config import load_models
+    from src.providers.registry import build_adapter
+
+    adapter = build_adapter("openrouter", "anthropic/claude-sonnet-5", {"max_tokens": 2048})
+    assert adapter.api_key_env == "OPENROUTER_API_KEY"
+    assert adapter.base_url == "https://openrouter.ai/api/v1"
+    # OpenRouter translates params per-provider itself; the adapter sends the
+    # standard `max_tokens` field (unlike the direct-OpenAI adapter).
+    assert adapter.max_tokens_param == "max_tokens"
+
+    models = load_models(ROOT / "config" / "models_openrouter.yaml")
+    assert len(models) == 20
+    assert all(m.provider == "openrouter" for m in models)
+    # Same portfolio names as the direct-API config, so --only and reports
+    # stay comparable across the two configs.
+    direct = load_models(ROOT / "config" / "models.yaml")
+    assert {m.name for m in models} == {m.name for m in direct}
+
+
 def test_min_tokens_scales_with_instrument_size():
     """Regression test: a live smoke test against IPIP-50 (50 items) hit a
     hard-coded 2048-token ceiling tuned for OEJTS (32 items) and came back
