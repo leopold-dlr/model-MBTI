@@ -69,3 +69,37 @@ def test_reverse_keyed_item():
     assert a2.raw_sum == 10
     assert a2.letter == "I"
     assert a2.pct_high == 100.0
+
+
+def test_keyed_overrides_flip_effective_direction():
+    """Polarity counterbalancing (prompting.templates.flip_map) swaps which
+    anchor an item displays its poles on for a given run; the scorer must
+    honor that per-run override rather than the instrument's canonical
+    `keyed`, or scoring silently drifts out of sync with what the model
+    actually saw."""
+    inst = Instrument(
+        name="mini", version="0", source="",
+        scale_min=1, scale_max=5,
+        low_label="", high_label="", midpoint_label="",
+        axes={"EI": {"pole_low": "E", "pole_high": "I"}},
+        type_order=["EI"],
+        items=[
+            Item(id=1, axis="EI", keyed=1, left="E", right="I"),
+            Item(id=2, axis="EI", keyed=1, left="E", right="I"),
+        ],
+    )
+    # Without override: both keyed +1, score 5/5 -> oriented 5+5=10 -> I.
+    baseline = score_axis(inst, "EI", {1: 5, 2: 5})
+    assert baseline.letter == "I"
+    assert baseline.raw_sum == 10
+
+    # Override item 2 to effective keyed -1 (as if its anchors were displayed
+    # swapped this run): same raw answers, oriented sum must change.
+    flipped = score_axis(inst, "EI", {1: 5, 2: 5}, keyed_overrides={2: -1})
+    assert flipped.raw_sum == 5 + ((1 + 5) - 5)  # item2 now oriented toward E
+    assert flipped.raw_sum == 6
+    assert flipped.letter == "E"
+
+    # score_answers threads keyed_overrides through to every axis too.
+    result = score_answers(inst, {1: 5, 2: 5}, keyed_overrides={2: -1})
+    assert result.axes["EI"].raw_sum == 6

@@ -19,6 +19,12 @@ class OpenAICompatibleAdapter(ProviderAdapter):
 
     #: Override in subclasses to hit a non-OpenAI endpoint.
     base_url: str | None = None
+    #: Chat Completions field name for the output-token cap. OpenAI's newer
+    #: reasoning-capable models (o-series, gpt-5) reject the legacy
+    #: `max_tokens` on this endpoint and require `max_completion_tokens`
+    #: instead; every other OpenAI-compatible provider still expects
+    #: `max_tokens`. Override per-subclass (see OpenAIAdapter).
+    max_tokens_param: str = "max_tokens"
 
     def _client(self):
         try:
@@ -44,7 +50,7 @@ class OpenAICompatibleAdapter(ProviderAdapter):
             ],
         }
         if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
+            kwargs[self.max_tokens_param] = max_tokens
         if temperature is not None:
             kwargs["temperature"] = temperature
         # Anything else the config passed (top_p, etc.) is forwarded as-is.

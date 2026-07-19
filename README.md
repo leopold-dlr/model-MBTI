@@ -17,14 +17,30 @@ short synthesis paper.
 For every model in `config/models.yaml`, the pipeline:
 
 1. Sends the **OEJTS** questionnaire (32 items, one-shot, English) with a
-   system prompt telling the model to answer **as itself**.
-2. Repeats this **N=20 independent runs** at the model's **default temperature**.
+   system prompt telling the model to answer **as itself**. Left/right anchor
+   polarity is **counterbalanced per run** (half of each axis's items are
+   displayed with poles swapped, and scored accordingly) so a model with any
+   systematic left/right or acquiescence bias doesn't land on the same letter
+   regardless of its actual tendencies.
+2. Repeats this **N=20 independent runs**, under one or more **temperature
+   conditions** (provider default, and/or a fixed temperature shared by every
+   model — see [Methodology](#methodology-fixed-decisions)) and optionally
+   under multiple **prompt-variant** wordings.
 3. Parses each strict-JSON reply, scores it into E/I · S/N · T/F · J/P letters
-   with preference percentages, and stores the full raw run for auditability.
-4. Aggregates per model: modal type, **type stability**, per-axis modal letter
-   frequency, mean preference, and dispersion (σ).
-5. Renders three artifacts: a comparative **markdown report**, an interactive
-   **HTML dashboard**, and a **synthesis paper** skeleton auto-filled from data.
+   with preference percentages, and stores the full raw run (both prompts,
+   every attempt, not just the successful one) for auditability.
+4. Aggregates per **(model, temperature condition, prompt variant)**: modal
+   type, **type stability with a 95% Wilson confidence interval**, per-axis
+   modal letter frequency, mean preference, dispersion (σ), and per-axis
+   **Cronbach's alpha** (do that axis's items even covary for this model?).
+   Stats are grouped by *experiment* (one per `run` invocation) so two
+   separate launches are never silently pooled together.
+5. Renders four artifacts: a comparative **markdown report**, an interactive
+   **HTML dashboard** (fully self-contained, Chart.js vendored inline), a
+   **CSV export**, and a **synthesis paper** skeleton auto-filled from data —
+   all referencing a **Monte Carlo random-responder baseline** so "stable"
+   numbers can be read against the floor a purely random answer pattern
+   would produce.
 
 ### The instrument: OEJTS (not MBTI)
 
@@ -51,23 +67,32 @@ $EDITOR .env
 
 # 3. Preview the exact prompt (no API calls, no keys needed)
 python main.py show-prompt
+python main.py show-prompt --model gpt-5 --run-index 3   # exact per-run reproduction
 
 # 4. Run the experiment (calls the APIs), then build reports
 python main.py run
 
-# ...or run a subset
+# ...or run a subset — exact name or family prefix (matches every gpt-5 tier)
 python main.py run --only claude-sonnet gpt
 
+# Interrupted mid-run? Resume instead of re-billing everything already valid.
+python main.py run --resume 20260719T120000Z
+
 # 5. Re-build reports from existing runs without calling any API
-python main.py report
+python main.py report                       # latest experiment only (default)
+python main.py report --list-experiments    # see what's available
+python main.py report --experiment 20260719T120000Z
 ```
 
 Outputs land in:
 
-- `data/runs/` — one JSON file per run (prompt, raw reply, parsed answers, score,
-  token usage). Git-ignored; this is your raw, replayable data.
-- `reports/dashboard.html` — the interactive dashboard (open in a browser).
+- `data/runs/` — one JSON file per run (both prompts sent on every attempt,
+  raw reply, parsed answers, score, token usage, item polarity, experiment
+  id). Git-ignored; this is your raw, replayable data.
+- `reports/dashboard.html` — the interactive dashboard (open in a browser;
+  works fully offline, Chart.js is vendored inline).
 - `reports/comparatif_<date>.md` — the comparative table + per-model detail.
+- `reports/summary_<date>.csv` — the same stats, flat, for spreadsheets/stats tools.
 - `reports/paper_<date>.md` — the synthesis paper draft.
 
 You only ever need to supply API keys — no code changes required to run.
@@ -122,6 +147,18 @@ endpoints, so a single `openai` client covers Mistral, xAI, DeepSeek,
 Moonshot, Qwen, Together and Cohere; Anthropic and Google use their native
 SDKs.
 
+> **Reasoning-capable models need a bigger token budget, and OpenAI's newer
+> models need a different parameter name.** `gpt-5`/`gpt-5-mini`,
+> `gemini-3-pro` and `grok-4.3` all spend part of their output budget on
+> internal reasoning before any visible reply, so they're configured with
+> `max_tokens: 4096` (vs. 2048 for the fast/small tiers) — a smaller budget
+> risks a silently-truncated, unparseable reply that gets logged as invalid
+> for no reason related to the model's "personality". Separately, gpt-5/
+> o-series reject the legacy `max_tokens` field on `/chat/completions`
+> entirely; `OpenAIAdapter` sends `max_completion_tokens` instead (see
+> `src/providers/openai_provider.py`) while every other OpenAI-compatible
+> provider still gets `max_tokens`.
+
 ---
 
 ## Architecture
@@ -129,8 +166,9 @@ SDKs.
 ```
 config/
   models.yaml            # portfolio: provider, model_id, params (pinned)
-  run_settings.yaml      # N runs, language, mode, seed, retries, concurrency
+  run_settings.yaml      # N runs, conditions, seed, retries, concurrency
   instrument/oejts_32.yaml   # the 32 items, axis + direction (data, not code)
+  instrument/ipip50_bigfive_SCAFFOLD.yaml  # 2nd-instrument scaffold, NOT populated (see file header)
 src/
   config.py              # load models + run settings
   instrument.py          # load + validate an instrument
@@ -140,16 +178,17 @@ src/
     anthropic_provider.py, google_provider.py, …  # one adapter per provider
     registry.py          # provider name -> adapter class
   prompting/
-    templates.py         # persona + one-shot prompt builder
+    templates.py         # persona/prompt-variant + one-shot prompt builder + polarity flip_map
     parser.py            # robust strict-JSON parsing with retries
   scoring/
-    mbti_scorer.py       # deterministic, network-free, unit-tested
+    mbti_scorer.py       # deterministic, network-free, unit-tested; keyed_overrides-aware
   runner/
-    orchestrator.py      # model × N runs -> prompt -> parse -> score -> store
+    orchestrator.py      # model × condition × N runs -> prompt -> parse -> score -> store
   report/
-    aggregate.py         # per-model stats: modal type, stability, dispersion
-    render.py            # markdown report + HTML dashboard + paper
-tests/                   # scorer / parser / instrument / aggregate (no network)
+    aggregate.py         # per-(model,condition) stats: modal type, CI, alpha, baseline
+    render.py            # markdown report + HTML dashboard + CSV + paper
+    vendor/chart.umd.min.js  # vendored Chart.js (MIT), so the dashboard works offline
+tests/                   # scorer / parser / instrument / templates / orchestrator / aggregate (no network)
 main.py                  # CLI
 ```
 
@@ -157,38 +196,72 @@ main.py                  # CLI
 
 - **One adapter per provider behind a common interface** — adding a model is
   adding a config line (and an adapter file only for a genuinely new API shape).
-- **The instrument is data.** Swap OEJTS for another questionnaire via YAML.
-- **Every raw run is stored in full** — prompts, raw reply, parsed answers,
-  score, usage — so scoring can be replayed and refusals stay auditable.
+- **The instrument is data.** Swap OEJTS for another questionnaire via YAML —
+  see the (intentionally unpopulated) IPIP scaffold for what that takes.
+- **Every raw run is stored in full** — both prompts sent on *every* attempt
+  (not just the successful one), raw reply, parsed answers, score, usage — so
+  scoring can be replayed and refusals stay auditable.
 - **Scoring is deterministic and unit-tested**, fully separated from any network
-  call.
+  call, and reproducible **across processes** (seeds are SHA-256-derived, not
+  based on Python's per-process-salted `hash()`).
 
 ### Methodology (fixed decisions)
 
 - **No role-play.** The system prompt instructs each model to answer as *itself*,
-  reported on every call.
+  reported on every call. An opt-in `prompt_variants` list
+  (`run_settings.yaml`) lets you ablate the exact wording without touching code.
 - **Closed questions only.** Each item is a 1–5 semantic-differential rating
   between two anchors; the reply must be strict JSON — no free text. This kills
   role-play drift and makes parsing reliable.
 - **One-shot.** All 32 items in a single request per run — cheaper, and avoids
   context drift over 32 turns.
-- **N=20 runs at default temperature.** The headline statistic is run-to-run
-  **stability**: a model that keeps the same type (low variance) vs. one that
-  "changes personality" between runs (high variance) is itself a result.
+- **Polarity counterbalancing.** Every item in `oejts_32.yaml` orients its
+  second (RIGHT) anchor toward the same set of letters (I/N/T/P). Left alone,
+  a model with any systematic left/right or acquiescence bias would land on
+  the same type regardless of its actual tendencies. Each run deterministically
+  flips which side each pole is displayed on for half of each axis's items
+  (`prompting.templates.flip_map`), inverting the effective `keyed` sign to
+  match, and records exactly which items were flipped (`item_polarity`) so
+  scoring is fully reproducible.
+- **N=20 runs per (model, temperature condition, prompt variant).** The
+  headline statistic is run-to-run **stability**: a model that keeps the same
+  type (low variance) vs. one that "changes personality" between runs (high
+  variance) is itself a result — reported with a **95% Wilson confidence
+  interval**, since at N≤20 point estimates alone invite over-reading noise
+  as signal.
+- **Temperature is a controlled variable, not an afterthought.**
+  `run_settings.yaml`'s `temperature_conditions` runs every model at the
+  provider's own default (uncontrolled — different providers default to
+  different sampling entropy) *and* at a fixed temperature shared by every
+  model. **Only the fixed-temperature condition is valid for comparing
+  stability across models/providers** — the default condition answers a
+  different question ("how does this model behave as actually deployed").
 - **Randomized item order** (deterministic per run seed) to blunt straight-lining;
-  reverse-keying is handled by the scorer, not the prompt.
-- **Fallback on refusal.** If a model refuses or breaks format, it is retried up
-  to `max_retries` with an explicit reminder; if it still fails, the run is
-  logged as **invalid** (a data point in itself) rather than fabricating scores.
+  reverse-keying (canonical or polarity-flipped) is handled by the scorer, not
+  the prompt.
+- **Fallback on refusal, separated from infrastructure retries.** A malformed
+  or refused reply is retried up to `max_retries` with an explicit reminder
+  (and logged **invalid** if it still fails — a data point in itself, not
+  fabricated scores). A transient API failure (network error, rate limit,
+  5xx) gets its own `max_provider_retries` budget with backoff and no
+  reminder, so a provider's rate limiting is never conflated with the model
+  refusing to answer.
+- **Reliability threshold.** A (model, condition) with fewer valid runs than
+  `min_valid_runs` is flagged `reliable: false` in every report and excluded
+  from the paper's "most/least stable" superlatives.
 
 ### Scoring
 
-Each item is tagged with an axis (`EI/SN/TF/JP`) and a direction (`keyed ±1`).
-Per axis: orient every item toward its second-pole letter, sum, and compare to
-the midpoint (`3 × n_items = 24`). Above midpoint → second letter (I/N/T/P),
+Each item is tagged with an axis (`EI/SN/TF/JP`) and a direction (`keyed ±1`),
+which the per-run polarity flip can invert for that run only. Per axis:
+orient every item toward its second-pole letter, sum, and compare to the
+midpoint (`3 × n_items = 24`). Above midpoint → second letter (I/N/T/P),
 otherwise first (E/S/F/J); ties break to the first letter. The **preference
 percentage** (e.g. 62% E / 38% I) is kept alongside the letter. Over N runs we
-report the modal letter per axis and its frequency — the stability measure.
+report the modal letter per axis with its frequency and Wilson CI (the
+stability measure), plus **Cronbach's alpha** — if an axis's 8 items don't
+covary for a given model, its letter isn't measuring one coherent thing no
+matter how "stable" it looks.
 
 ---
 
@@ -200,8 +273,24 @@ Read these before drawing conclusions:
   validity** in psychology, even for humans. Applied to an LLM, the result
   measures a **prompt-conditioned text-output tendency shaped by training data**,
   not a "personality trait" in any real sense.
-- Results are **sensitive to prompt wording, language, and temperature** — hence
-  multiple runs and a stability metric rather than a single number.
+- Results are **sensitive to prompt wording and language**. The wording
+  ablation (`prompt_variants`) and a second language are supported but
+  **opt-in** (disabled by default to keep the base run's cost fixed) —
+  results from a single default wording in English should not be treated as
+  wording-invariant unless you've actually run the ablation.
+- **No independent (e.g. Big Five) instrument is included yet.** A second,
+  differently-normed instrument would let you check convergent validity
+  (do OEJTS "I" and an independent Extraversion score actually correlate?).
+  `config/instrument/ipip50_bigfive_SCAFFOLD.yaml` documents the intended
+  schema but ships with **zero items on purpose**: the canonical IPIP-50 item
+  text could not be safely verified against a live source in the environment
+  this was built in, and shipping guessed-from-memory psychometric item text
+  under the IPIP name would be worse than shipping nothing. Populate it from
+  [ipip.ori.org](https://ipip.ori.org/) before use.
+- Even with Wilson CIs and a random-responder baseline, **N=20 runs per
+  condition is still modest** — many pairwise model comparisons will have
+  overlapping confidence intervals. Raise `n_runs` (cost scales linearly) if
+  you need tighter comparisons.
 - Prior academic work on MBTI-testing LLMs (e.g. GPT/InstructGPT/GPT-4) is
   documented at
   [github.com/Kali-Hac/ChatGPT-MBTI](https://github.com/Kali-Hac/ChatGPT-MBTI) —
@@ -212,20 +301,29 @@ Read these before drawing conclusions:
 ## Configuration reference
 
 - `config/models.yaml` — set `enabled: false` to skip a model without deleting
-  it; put per-model `params` (e.g. `max_tokens`) inline. Temperature is
-  intentionally left unset (default temperature per model).
+  it; put per-model `params` (e.g. `max_tokens`) inline. Temperature is set
+  per *condition* (see below), not per model.
 - `config/run_settings.yaml` — `n_runs`, `language`, `seed`, `max_retries`,
-  `max_concurrency`, output/report dirs.
+  `max_provider_retries`, `max_concurrency`, `min_valid_runs`,
+  `temperature_conditions` (list of `{label, value}`; `value: null` = provider
+  default), `prompt_variants` (list of names from
+  `src/prompting/templates.SYSTEM_PROMPTS`), output/report dirs.
 - `config/instrument/oejts_32.yaml` — the items and scoring metadata.
 
 ### Cost & re-runs
 
 There is no hard request cap; token usage is captured per run in the raw JSON so
-you can monitor spend (20 models × 20 runs = 400 base calls, more with
-retries). Lower `n_runs` in `config/run_settings.yaml` for a cheap smoke test
-before committing to a full run. Runs
-are timestamped and versioned, so the same command can be re-executed later to
-track how models drift over time — no code changes needed.
+you can monitor spend. With the shipped defaults (20 models × 20 runs × **2**
+temperature conditions × 1 prompt variant) that's **800 base calls** before
+retries — trim `temperature_conditions` to one entry to go back to 400, or
+add prompt variants/a 2nd temperature to scale further. Lower `n_runs` for a
+cheap smoke test before committing to a full run; **use `--resume
+<experiment_id>` after an interrupted run instead of restarting from zero and
+re-billing everything already valid.** Runs are timestamped, seeded, and
+tagged with an `experiment_id`, so the same command can be re-executed later
+to track how models drift over time — no code changes needed, and separate
+launches are never silently pooled in reports (`report --list-experiments` /
+`--experiment <id>` / `--all-experiments`).
 
 ## Tests
 
@@ -233,11 +331,19 @@ track how models drift over time — no code changes needed.
 python -m pytest -q
 ```
 
-The scorer, parser, instrument loader, and report aggregation are covered by
-network-free unit tests.
+The scorer (incl. polarity overrides), parser, instrument loader (incl. the
+empty-scaffold rejection), prompt templates (incl. flip-map determinism and
+prompt variants), orchestrator (incl. a cross-process seed-determinism
+regression test and `--only` matching), and report aggregation (incl. Wilson
+CIs, Cronbach's alpha, experiment/condition grouping, and the CSV/dashboard
+renderers) are all covered by network-free unit tests.
 
 ## License / attribution
 
 OEJTS item text: Eric Jorgenson, *Open Extended Jungian Type Scales 1.2*, Open
 Psychometrics (public domain). This repository is an independent research tool
 and is not affiliated with or endorsed by The Myers-Briggs Company.
+
+The dashboard vendors [Chart.js](https://www.chartjs.org/) (MIT License,
+Chart.js Contributors) inline so it runs fully offline — see
+`src/report/vendor/CHARTJS_LICENSE.md`.

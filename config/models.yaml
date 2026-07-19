@@ -49,17 +49,22 @@ models:
     params: { max_tokens: 2048 }
 
   # ---- OpenAI (3 sizes) -------------------------------------------------
+  # gpt-5 / gpt-5-mini are reasoning-capable: their internal reasoning tokens
+  # are deducted from max_tokens (sent as max_completion_tokens -- see
+  # openai_provider.py), so a budget sized for output alone silently truncates
+  # to an empty reply and the run comes back invalid. Sized generously; nano
+  # is the fast/low-reasoning tier so it keeps the smaller default budget.
   - name: gpt-5
     provider: openai
     model_id: gpt-5
     enabled: true
-    params: { max_tokens: 2048 }
+    params: { max_tokens: 4096 }
 
   - name: gpt-5-mini
     provider: openai
     model_id: gpt-5-mini
     enabled: true
-    params: { max_tokens: 2048 }
+    params: { max_tokens: 4096 }
 
   - name: gpt-5-nano
     provider: openai
@@ -68,11 +73,12 @@ models:
     params: { max_tokens: 2048 }
 
   # ---- Google (2 sizes) --------------------------------------------------
+  # gemini-pro reasons internally too; same budget rationale as gpt-5 above.
   - name: gemini-pro
     provider: google
     model_id: gemini-3-pro
     enabled: true
-    params: { max_tokens: 2048 }
+    params: { max_tokens: 4096 }
 
   - name: gemini-flash
     provider: google
@@ -94,11 +100,12 @@ models:
     params: { max_tokens: 2048 }
 
   # ---- xAI (2 tiers: flagship reasoning vs. fast/cheap) -------------------
+  # grok-4 reasons internally too; same budget rationale as gpt-5 above.
   - name: grok-4
     provider: xai
     model_id: grok-4.3  # verify: xAI retires Grok sub-versions quickly, check docs.x.ai/developers/models
     enabled: true
-    params: { max_tokens: 2048 }
+    params: { max_tokens: 4096 }
 
   - name: grok-4-fast
     provider: xai

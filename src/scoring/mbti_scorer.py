@@ -69,13 +69,30 @@ def _oriented(score: int, keyed: int, scale_min: int, scale_max: int) -> int:
     return (scale_min + scale_max) - score
 
 
-def score_axis(inst: Instrument, axis: str, answers: dict[int, int]) -> AxisScore:
+def score_axis(
+    inst: Instrument,
+    axis: str,
+    answers: dict[int, int],
+    keyed_overrides: dict[int, int] | None = None,
+) -> AxisScore:
+    """Score one axis.
+
+    ``keyed_overrides`` maps item id -> effective keyed (+1/-1), overriding the
+    instrument's canonical ``keyed`` for that item. Used when the item's
+    left/right anchors were swapped in the prompt actually sent for this run
+    (see ``prompting.templates.flip_map``), so scoring stays consistent with
+    what the model actually saw.
+    """
     items = inst.items_for_axis(axis)
     n = len(items)
     if n == 0:
         raise ValueError(f"No items for axis '{axis}'.")
+    overrides = keyed_overrides or {}
     raw_sum = sum(
-        _oriented(answers[it.id], it.keyed, inst.scale_min, inst.scale_max) for it in items
+        _oriented(
+            answers[it.id], overrides.get(it.id, it.keyed), inst.scale_min, inst.scale_max
+        )
+        for it in items
     )
     pole_low = inst.axes[axis]["pole_low"]
     pole_high = inst.axes[axis]["pole_high"]
@@ -100,7 +117,11 @@ def score_axis(inst: Instrument, axis: str, answers: dict[int, int]) -> AxisScor
     )
 
 
-def score_answers(inst: Instrument, answers: dict[int, int]) -> TypeResult:
+def score_answers(
+    inst: Instrument,
+    answers: dict[int, int],
+    keyed_overrides: dict[int, int] | None = None,
+) -> TypeResult:
     """Score a complete answer set. Raises KeyError if an item is unanswered."""
     missing = set(inst.item_ids()) - set(answers)
     if missing:
@@ -109,7 +130,7 @@ def score_answers(inst: Instrument, answers: dict[int, int]) -> TypeResult:
     axes: dict[str, AxisScore] = {}
     letters: list[str] = []
     for axis in inst.type_order:
-        axis_score = score_axis(inst, axis, answers)
+        axis_score = score_axis(inst, axis, answers, keyed_overrides=keyed_overrides)
         axes[axis] = axis_score
         letters.append(axis_score.letter)
     return TypeResult(type="".join(letters), axes=axes)

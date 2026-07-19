@@ -34,6 +34,39 @@ seed: 42
 # invalid (the refusal is itself a data point) rather than fabricating scores.
 max_retries: 3
 
+# Separate retry budget for transient API failures (network errors, rate
+# limits, 5xx) -- NOT counted against max_retries and no reminder is added,
+# since these are infrastructure noise, not model behavior. Conflating the two
+# would make a provider's rate limiting look like a model "refusal".
+max_provider_retries: 5
+
+# Minimum valid runs (per model x condition) required before a stability
+# figure is treated as reliable in reports; below this, tables/paper flag the
+# number as low-confidence rather than silently reporting it at face value.
+min_valid_runs: 10
+
+# Temperature conditions to run each model x n_runs under. "default" (value:
+# null) sends no temperature override, i.e. the provider's own default --
+# this is what the headline "does this model have a personality" table uses.
+# Providers differ in their default temperature, which is a confound for the
+# STABILITY comparison across models/providers (more sampling entropy alone
+# produces more type-flipping, independent of any real trait). The second,
+# fixed-temperature condition removes that confound: use it, not "default",
+# whenever comparing stability ACROSS models. Add/remove entries here; each
+# one multiplies the number of API calls by n_runs.
+temperature_conditions:
+  - label: default
+    value: null
+  - label: fixed_t1
+    value: 1.0
+
+# Named system-prompt framings to run (see src/prompting/templates.py
+# SYSTEM_PROMPTS). Left as a single entry by default so cost is unchanged;
+# add "as_ai_explicit" and/or "no_meta_mention" to run a prompt-wording
+# ablation (each entry again multiplies the call count by n_runs).
+prompt_variants:
+  - default
+
 # Where raw per-run JSON is written.
 output_dir: data/runs
 

@@ -1,8 +1,16 @@
 from pathlib import Path
 
+import pytest
+
 from src.instrument import load_instrument
 
 INSTRUMENT = Path(__file__).resolve().parent.parent / "config" / "instrument" / "oejts_32.yaml"
+SCAFFOLD_INSTRUMENT = (
+    Path(__file__).resolve().parent.parent
+    / "config"
+    / "instrument"
+    / "ipip50_bigfive_SCAFFOLD.yaml"
+)
 
 
 def test_loads_32_items():
@@ -30,3 +38,12 @@ def test_scale_bounds():
     assert inst.scale_min == 1
     assert inst.scale_max == 5
     assert inst.scale_midpoint == 3
+
+
+def test_empty_instrument_rejected():
+    """The IPIP scaffold ships with an intentionally empty `items:` list (its
+    text could not be safely verified against a live source -- see the file's
+    header comment) and must fail loudly rather than silently loading as a
+    usable-but-empty instrument."""
+    with pytest.raises(ValueError, match="no items"):
+        load_instrument(SCAFFOLD_INSTRUMENT)

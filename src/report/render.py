@@ -1,93 +1,177 @@
 """Render aggregated stats into (1) a comparative markdown report, (2) an
-interactive self-contained HTML dashboard, and (3) a synthesis paper skeleton.
+interactive self-contained HTML dashboard, (3) a CSV export, and (4) a
+synthesis paper skeleton.
 
-All three are generated from the same aggregated data, so re-running the
+All four are generated from the same aggregated data, so re-running the
 pipeline refreshes them without any manual editing.
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import json
+from collections import Counter
 from datetime import date
 from pathlib import Path
 
-from .aggregate import ModelStats
+from ..instrument import Instrument
+from .aggregate import ModelStats, random_baseline_stats
 
-# Colorblind-safe categorical palette (Okabe-Ito), used for per-model series.
+# 20-color categorical palette (matplotlib's "tab20"), so up to 20 distinct
+# model series stay visually distinguishable -- the previous 10-color palette
+# repeated colors past model #10, which for a 20-model portfolio makes half
+# the series indistinguishable in the comparison charts.
 PALETTE = [
-    "#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7",
-    "#56B4E9", "#F0E442", "#999999", "#332288", "#AA4499",
+    "#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c",
+    "#98df8a", "#d62728", "#ff9896", "#9467bd", "#c5b0d5",
+    "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f",
+    "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5",
 ]
+
+_VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
+
+
+def condition_label(s: ModelStats) -> str:
+    return f"{s.temperature_condition}/{s.prompt_variant}"
+
+
+def _group_by_condition(stats: list[ModelStats]) -> list[tuple[str, list[ModelStats]]]:
+    """Group stats by (temperature_condition, prompt_variant), preserving the
+    order conditions first appear in. Most reports will have exactly one
+    group (single condition/variant); multiple groups only appear once you
+    opt into the temperature or prompt-variant ablation in run_settings.yaml."""
+    order: list[str] = []
+    groups: dict[str, list[ModelStats]] = {}
+    for s in stats:
+        label = condition_label(s)
+        if label not in groups:
+            groups[label] = []
+            order.append(label)
+        groups[label].append(s)
+    return [(label, groups[label]) for label in order]
+
+
+def _fmt_ci(ci: tuple[float, float] | list[float]) -> str:
+    lo, hi = ci
+    return f"[{lo*100:.0f},{hi*100:.0f}]"
 
 
 # --------------------------------------------------------------------------- #
 # Markdown comparative report
 # --------------------------------------------------------------------------- #
-def render_markdown(stats: list[ModelStats], axes_order: list[str]) -> str:
+def render_markdown(
+    stats: list[ModelStats],
+    axes_order: list[str],
+    baseline: dict | None = None,
+) -> str:
+    groups = _group_by_condition(stats)
     lines = [
         "# LLM MBTI Arena — Comparative Report",
         "",
         f"_Generated {date.today().isoformat()} from {sum(s.n_total for s in stats)} "
-        f"runs across {len(stats)} models._",
+        f"runs across {len({s.model_name for s in stats})} models, "
+        f"{len(groups)} condition(s)._",
         "",
-        "## Summary table",
-        "",
-        "Stability = share of valid runs landing on the model's modal type. "
-        "Per-axis cells show the modal letter and its run frequency; the "
-        "percentage is the mean preference toward that pole.",
+        "Stability = share of valid runs landing on the model's modal type/letter, "
+        "with a 95% Wilson confidence interval in brackets -- at N<=20 runs, do not "
+        "read small differences between models as meaningful without checking "
+        "whether their intervals overlap. Per-axis cells show only the modal "
+        "letter and its run frequency; mean preference-% and Cronbach's alpha "
+        "(inter-item consistency, None if undefined) are in the per-model detail "
+        "below, not in this summary table, to avoid cramming two different "
+        "percentages into one cell.",
         "",
     ]
-    header = "| Model | Provider | Modal type | Stability | Valid |"
-    sep = "|---|---|---|---|---|"
-    for axis in axes_order:
-        header += f" {axis} |"
-        sep += "---|"
-    lines += [header, sep]
-
-    for s in stats:
-        row = (
-            f"| `{s.model_name}` | {s.provider} | **{s.modal_type}** "
-            f"| {s.modal_type_freq*100:.0f}% | {s.n_valid}/{s.n_total} |"
-        )
-        for axis in axes_order:
-            a = s.axes.get(axis)
-            if a is None:
-                row += " — |"
-                continue
-            freq = a.modal_freq * 100
-            pct = a.mean_pct_high if a.modal_letter == a.pole_high else (100 - a.mean_pct_high)
-            row += f" {a.modal_letter} ({freq:.0f}%, {pct:.0f}%) |"
-        lines.append(row)
-
-    lines += ["", "## Per-model detail", ""]
-    for s in stats:
-        lines += [f"### `{s.model_name}` — {s.provider} / `{s.model_id}`", ""]
-        if s.n_valid == 0:
-            lines += [
-                f"- No valid runs ({s.n_invalid} invalid).",
-                _invalid_summary(s),
-                "",
-            ]
-            continue
+    if baseline is not None:
         lines += [
-            f"- Modal type: **{s.modal_type}** (stable in {s.modal_type_freq*100:.0f}% of runs)",
-            f"- Valid runs: {s.n_valid}/{s.n_total}"
-            + (f" ({s.n_invalid} invalid)" if s.n_invalid else ""),
-            f"- Types observed: {_fmt_counts(s.type_counts)}",
+            f"**Random-responder baseline** (Monte Carlo, {baseline['n_trials']} simulated "
+            f"models of {baseline['n_runs']} runs each, uniform random answers, zero signal): "
+            f"expected modal-type stability = {baseline['modal_type_freq_mean']*100:.0f}% "
+            f"(5th-95th pct: {baseline['modal_type_freq_p05']*100:.0f}-"
+            f"{baseline['modal_type_freq_p95']*100:.0f}%). A model's stability is only "
+            "evidence of a real response tendency to the extent it clears this floor.",
+            "",
         ]
+
+    for label, group in groups:
+        if len(groups) > 1:
+            lines += [f"## Condition: `{label}`", ""]
+            tc = group[0].temperature_condition
+            if tc == "default":
+                lines.append(
+                    "_Provider default temperature -- confounded by differing sampling "
+                    "entropy across providers; do not use this condition alone to compare "
+                    "stability ACROSS models._"
+                )
+            else:
+                lines.append(
+                    "_Fixed temperature across all models -- the controlled condition for "
+                    "cross-model stability comparison._"
+                )
+            lines.append("")
+
+        header = "| Model | Provider | Modal type | Stability (95% CI) | Reliable | Valid |"
+        sep = "|---|---|---|---|---|---|"
         for axis in axes_order:
-            a = s.axes.get(axis)
-            if a is None:
-                continue
-            lines.append(
-                f"- {axis}: modal **{a.modal_letter}** "
-                f"({a.modal_freq*100:.0f}% of runs); "
-                f"mean pref toward {a.pole_high}={a.mean_pct_high:.0f}% "
-                f"(σ={a.std_pct_high:.1f}); letters {_fmt_counts(a.letter_counts)}"
+            header += f" {axis} |"
+            sep += "---|"
+        lines += [header, sep]
+
+        for s in group:
+            reliable_mark = "✓" if s.reliable else "⚠ low N"
+            row = (
+                f"| `{s.model_name}` | {s.provider} | **{s.modal_type}** "
+                f"| {s.modal_type_freq*100:.0f}% {_fmt_ci(s.modal_type_freq_ci)} "
+                f"| {reliable_mark} | {s.n_valid}/{s.n_total} |"
             )
-        if s.n_invalid:
-            lines.append(_invalid_summary(s))
+            for axis in axes_order:
+                a = s.axes.get(axis)
+                if a is None:
+                    row += " — |"
+                    continue
+                row += f" {a.modal_letter} ({a.modal_freq*100:.0f}%) |"
+            lines.append(row)
         lines.append("")
+
+    lines += ["## Per-model detail", ""]
+    for label, group in groups:
+        cond_suffix = f" — condition `{label}`" if len(groups) > 1 else ""
+        for s in group:
+            lines += [f"### `{s.model_name}`{cond_suffix} — {s.provider} / `{s.model_id}`", ""]
+            if s.n_valid == 0:
+                lines += [
+                    f"- No valid runs ({s.n_invalid} invalid).",
+                    _invalid_summary(s),
+                    "",
+                ]
+                continue
+            reliability_note = (
+                "" if s.reliable else f" — **below min_valid_runs threshold, treat with caution**"
+            )
+            lines += [
+                f"- Modal type: **{s.modal_type}** (stable in {s.modal_type_freq*100:.0f}% "
+                f"of runs, 95% CI {_fmt_ci(s.modal_type_freq_ci)}){reliability_note}",
+                f"- Valid runs: {s.n_valid}/{s.n_total}"
+                + (f" ({s.n_invalid} invalid)" if s.n_invalid else ""),
+                f"- Answered without any retry: {s.pct_first_attempt*100:.0f}% of valid runs",
+                f"- Types observed: {_fmt_counts(s.type_counts)}",
+            ]
+            for axis in axes_order:
+                a = s.axes.get(axis)
+                if a is None:
+                    continue
+                alpha_str = f"{a.cronbach_alpha:.2f}" if a.cronbach_alpha is not None else "n/a"
+                lines.append(
+                    f"- {axis}: modal **{a.modal_letter}** "
+                    f"({a.modal_freq*100:.0f}% of runs, CI {_fmt_ci(a.modal_freq_ci)}); "
+                    f"mean pref toward {a.pole_high}={a.mean_pct_high:.0f}% "
+                    f"(σ={a.std_pct_high:.1f}, distance from midpoint={a.dist_from_midpoint:.0f}pt); "
+                    f"Cronbach α={alpha_str}; letters {_fmt_counts(a.letter_counts)}"
+                )
+            if s.n_invalid:
+                lines.append(_invalid_summary(s))
+            lines.append("")
 
     lines += [
         "## Methodological caveats",
@@ -95,7 +179,10 @@ def render_markdown(stats: list[ModelStats], axes_order: list[str]) -> str:
         "See the project README. In short: the OEJTS is an open MBTI-style "
         "instrument whose validity is contested even for humans. Applied to an "
         "LLM it measures a *prompt-conditioned text-output tendency*, not a "
-        "personality trait. Treat this as exploratory, not psychometric.",
+        "personality trait. Treat this as exploratory, not psychometric. A low "
+        "or undefined Cronbach's alpha on an axis means that axis's items don't "
+        "covary for that model -- its letter is not measuring one coherent "
+        "thing, whatever its apparent run-to-run stability.",
         "",
     ]
     return "\n".join(lines)
@@ -110,20 +197,94 @@ def _fmt_counts(counts: dict) -> str:
 def _invalid_summary(s: ModelStats) -> str:
     if not s.invalid_reasons:
         return ""
-    from collections import Counter
-
     c = Counter(r[:80] for r in s.invalid_reasons)
     reasons = "; ".join(f"{k} (×{v})" for k, v in c.most_common(3))
     return f"- Invalid runs: {reasons}"
 
 
 # --------------------------------------------------------------------------- #
+# CSV export
+# --------------------------------------------------------------------------- #
+def render_csv(stats: list[ModelStats], axes_order: list[str]) -> str:
+    """One row per (model, temperature_condition, prompt_variant). Axis
+    columns are prefixed per axis so the file stays flat/spreadsheet-friendly."""
+    fieldnames = [
+        "model_name", "provider", "model_id", "temperature_condition", "prompt_variant",
+        "n_total", "n_valid", "n_invalid", "reliable", "pct_first_attempt",
+        "modal_type", "modal_type_freq", "modal_type_freq_ci_lo", "modal_type_freq_ci_hi",
+    ]
+    for axis in axes_order:
+        fieldnames += [
+            f"{axis}_modal_letter", f"{axis}_modal_freq",
+            f"{axis}_modal_freq_ci_lo", f"{axis}_modal_freq_ci_hi",
+            f"{axis}_mean_pct_high", f"{axis}_std_pct_high",
+            f"{axis}_dist_from_midpoint", f"{axis}_cronbach_alpha",
+        ]
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer.writeheader()
+    for s in stats:
+        row = {
+            "model_name": s.model_name,
+            "provider": s.provider,
+            "model_id": s.model_id,
+            "temperature_condition": s.temperature_condition,
+            "prompt_variant": s.prompt_variant,
+            "n_total": s.n_total,
+            "n_valid": s.n_valid,
+            "n_invalid": s.n_invalid,
+            "reliable": s.reliable,
+            "pct_first_attempt": round(s.pct_first_attempt, 4),
+            "modal_type": s.modal_type,
+            "modal_type_freq": round(s.modal_type_freq, 4),
+            "modal_type_freq_ci_lo": round(s.modal_type_freq_ci[0], 4),
+            "modal_type_freq_ci_hi": round(s.modal_type_freq_ci[1], 4),
+        }
+        for axis in axes_order:
+            a = s.axes.get(axis)
+            if a is None:
+                for suffix in (
+                    "modal_letter", "modal_freq", "modal_freq_ci_lo", "modal_freq_ci_hi",
+                    "mean_pct_high", "std_pct_high", "dist_from_midpoint", "cronbach_alpha",
+                ):
+                    row[f"{axis}_{suffix}"] = ""
+                continue
+            row[f"{axis}_modal_letter"] = a.modal_letter
+            row[f"{axis}_modal_freq"] = round(a.modal_freq, 4)
+            row[f"{axis}_modal_freq_ci_lo"] = round(a.modal_freq_ci[0], 4)
+            row[f"{axis}_modal_freq_ci_hi"] = round(a.modal_freq_ci[1], 4)
+            row[f"{axis}_mean_pct_high"] = round(a.mean_pct_high, 2)
+            row[f"{axis}_std_pct_high"] = round(a.std_pct_high, 2)
+            row[f"{axis}_dist_from_midpoint"] = round(a.dist_from_midpoint, 2)
+            row[f"{axis}_cronbach_alpha"] = (
+                round(a.cronbach_alpha, 3) if a.cronbach_alpha is not None else ""
+            )
+        writer.writerow(row)
+    return buf.getvalue()
+
+
+# --------------------------------------------------------------------------- #
 # Synthesis paper skeleton
 # --------------------------------------------------------------------------- #
-def render_paper(stats: list[ModelStats], axes_order: list[str]) -> str:
-    valid_stats = [s for s in stats if s.n_valid > 0]
-    most_stable = max(valid_stats, key=lambda s: s.modal_type_freq, default=None)
-    least_stable = min(valid_stats, key=lambda s: s.modal_type_freq, default=None)
+def render_paper(
+    stats: list[ModelStats],
+    axes_order: list[str],
+    baseline: dict | None = None,
+) -> str:
+    groups = _group_by_condition(stats)
+    # Prefer a non-"default" (i.e. fixed-temperature, controlled) condition for
+    # the headline cross-model comparison; providers' differing default
+    # temperatures are a confound for comparing stability across models.
+    primary_label, primary_group = groups[0]
+    for label, group in groups:
+        if group[0].temperature_condition != "default":
+            primary_label, primary_group = label, group
+            break
+    comparable = [s for s in primary_group if s.n_valid > 0 and s.reliable]
+    excluded = [s for s in primary_group if s.n_valid > 0 and not s.reliable]
+    most_stable = max(comparable, key=lambda s: s.modal_type_freq, default=None)
+    least_stable = min(comparable, key=lambda s: s.modal_type_freq, default=None)
 
     lines = [
         "# Do Large Language Models Have a Personality? An OEJTS Arena",
@@ -137,17 +298,39 @@ def render_paper(stats: list[ModelStats], axes_order: list[str]) -> str:
         "free public-domain instrument covering the four MBTI dichotomies "
         "(E/I, S/N, T/F, J/P), to a portfolio of large language models. Each "
         "model answered the 32-item questionnaire in a single request, in "
-        "English, at its own default temperature, with a system prompt "
-        "instructing it to answer *as itself* rather than role-playing a "
-        "character. We repeated this independently N times per model to measure "
-        "not just the type but its run-to-run **stability**.",
+        "English, with a system prompt instructing it to answer *as itself* "
+        "rather than role-playing a character. Left/right anchor polarity was "
+        "counterbalanced per run (half of each axis's items displayed with "
+        "poles swapped, scored accordingly) to control for position/"
+        "acquiescence bias. We repeated this independently N times per model "
+        "under at least one fixed-temperature condition (to keep sampling "
+        "entropy comparable across providers) to measure not just the type but "
+        "its run-to-run **stability**, reported with 95% Wilson confidence "
+        "intervals and against a Monte Carlo random-responder baseline.",
         "",
-        f"Models tested: {', '.join(f'`{s.model_name}`' for s in stats)}.",
-        "",
-        "## 2. Results by model",
+        f"Models tested: {', '.join(f'`{n}`' for n in sorted({s.model_name for s in stats}))}.",
+        f"Primary cross-model comparison uses condition `{primary_label}`.",
         "",
     ]
-    for s in stats:
+    if baseline is not None:
+        lines += [
+            f"Random-responder baseline (uniform random answers, {baseline['n_trials']} "
+            f"simulated models): expected modal-type stability "
+            f"{baseline['modal_type_freq_mean']*100:.0f}% "
+            f"(5th-95th pct {baseline['modal_type_freq_p05']*100:.0f}-"
+            f"{baseline['modal_type_freq_p95']*100:.0f}%).",
+            "",
+        ]
+    if excluded:
+        lines += [
+            f"_{len(excluded)} model(s) fell below the minimum valid-run threshold in "
+            f"condition `{primary_label}` and are excluded from the superlatives below: "
+            f"{', '.join(s.model_name for s in excluded)}._",
+            "",
+        ]
+
+    lines += ["## 2. Results by model", ""]
+    for s in primary_group:
         if s.n_valid == 0:
             lines.append(
                 f"- **{s.model_name}** ({s.provider}): no valid runs "
@@ -155,15 +338,14 @@ def render_paper(stats: list[ModelStats], axes_order: list[str]) -> str:
                 "the required format, itself a notable behavior."
             )
             continue
-        # Identify the model's most and least stable axes.
         axis_items = [(ax, s.axes[ax]) for ax in axes_order if ax in s.axes]
-        # Break modal-frequency ties by preference dispersion so the two picks
-        # differ even when every axis is equally stable.
         steadiest = max(axis_items, key=lambda kv: (kv[1].modal_freq, -kv[1].std_pct_high))[1]
         waviest = min(axis_items, key=lambda kv: (kv[1].modal_freq, -kv[1].std_pct_high))[1]
+        reliability_flag = "" if s.reliable else " *(low N, low confidence)*"
         lines.append(
             f"- **{s.model_name}** ({s.provider}): modal type **{s.modal_type}** "
-            f"in {s.modal_type_freq*100:.0f}% of runs. Its firmest axis is "
+            f"in {s.modal_type_freq*100:.0f}% of runs (CI {_fmt_ci(s.modal_type_freq_ci)})"
+            f"{reliability_flag}. Its firmest axis is "
             f"{steadiest.axis} (modal {steadiest.modal_letter}, "
             f"{steadiest.modal_freq*100:.0f}%); its most variable is "
             f"{waviest.axis} ({waviest.modal_freq*100:.0f}% modal, "
@@ -173,9 +355,14 @@ def render_paper(stats: list[ModelStats], axes_order: list[str]) -> str:
     if most_stable and least_stable:
         lines += [
             f"- Most stable personality: **{most_stable.model_name}** "
-            f"(type held in {most_stable.modal_type_freq*100:.0f}% of runs).",
+            f"(type held in {most_stable.modal_type_freq*100:.0f}% of runs, "
+            f"CI {_fmt_ci(most_stable.modal_type_freq_ci)}).",
             f"- Least stable personality: **{least_stable.model_name}** "
-            f"(modal type only {least_stable.modal_type_freq*100:.0f}%).",
+            f"(modal type only {least_stable.modal_type_freq*100:.0f}%, "
+            f"CI {_fmt_ci(least_stable.modal_type_freq_ci)}).",
+            "- Before treating these two as meaningfully different, check whether "
+            "their confidence intervals actually overlap -- at N<=20 runs they "
+            "often do.",
             "- TODO: discuss provider/family clustering and any size effects.",
             "",
         ]
@@ -185,29 +372,39 @@ def render_paper(stats: list[ModelStats], axes_order: list[str]) -> str:
         "These numbers describe *how the models answer a self-report survey*, "
         "conditioned on prompt wording, language, and sampling temperature — not "
         "a validated personality trait. The MBTI/OEJTS framework is contested in "
-        "psychology even for humans. The multi-run design and stability metric "
-        "are meant to foreground exactly this fragility: a type that changes "
-        "from run to run is a caution against over-interpreting any single "
-        "result. See the README for the full list of caveats and prior work.",
+        "psychology even for humans. The multi-run design, confidence intervals, "
+        "random-responder baseline, and per-axis Cronbach's alpha are meant to "
+        "foreground exactly this fragility: a type that changes from run to run, "
+        "or an axis with low inter-item consistency, is a caution against "
+        "over-interpreting any single result. See the README for the full list "
+        "of caveats and prior work.",
         "",
     ]
     return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #
-# Interactive HTML dashboard (self-contained)
+# Interactive HTML dashboard (self-contained, incl. vendored Chart.js)
 # --------------------------------------------------------------------------- #
-def render_dashboard(stats: list[ModelStats], axes_order: list[str]) -> str:
+def render_dashboard(
+    stats: list[ModelStats],
+    axes_order: list[str],
+    baseline: dict | None = None,
+) -> str:
+    groups = _group_by_condition(stats)
     payload = {
         "generated": date.today().isoformat(),
         "axes_order": axes_order,
         "palette": PALETTE,
-        "models": [s.to_dict() for s in stats],
+        "baseline": baseline,
+        "condition_order": [label for label, _ in groups],
+        "conditions": {label: [s.to_dict() for s in group] for label, group in groups},
     }
     data_json = json.dumps(payload, ensure_ascii=False)
-    # Chart.js is loaded from a CDN; the data itself is embedded so the file is
-    # a single shareable artifact.
-    return _DASHBOARD_TEMPLATE.replace("__DATA_JSON__", data_json)
+    chartjs_source = (_VENDOR_DIR / "chart.umd.min.js").read_text(encoding="utf-8")
+    html = _DASHBOARD_TEMPLATE.replace("__DATA_JSON__", data_json)
+    html = html.replace("__CHARTJS_SOURCE__", chartjs_source)
+    return html
 
 
 _DASHBOARD_TEMPLATE = r"""<!doctype html>
@@ -216,7 +413,11 @@ _DASHBOARD_TEMPLATE = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LLM MBTI Arena — Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+/* Vendored Chart.js (MIT License, Chart.js Contributors) -- inlined so this
+   dashboard works fully offline as a single self-contained file. */
+__CHARTJS_SOURCE__
+</script>
 <style>
   :root{
     --bg:#ffffff; --panel:#f6f7f9; --border:#e2e5ea; --text:#1a1d23;
@@ -231,7 +432,7 @@ _DASHBOARD_TEMPLATE = r"""<!doctype html>
   header{padding:24px 20px 8px}
   h1{margin:0;font-size:1.5rem}
   .sub{color:var(--muted);font-size:.9rem;margin-top:4px}
-  .tabs{display:flex;gap:8px;padding:12px 20px;flex-wrap:wrap}
+  .tabs{display:flex;gap:8px;padding:12px 20px;flex-wrap:wrap;align-items:center}
   .tab{border:1px solid var(--border);background:var(--panel);color:var(--text);
     padding:6px 14px;border-radius:999px;cursor:pointer;font-size:.9rem}
   .tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
@@ -253,6 +454,7 @@ _DASHBOARD_TEMPLATE = r"""<!doctype html>
     border-radius:8px;padding:6px 10px;font-size:.9rem;margin:8px 0 16px}
   .chartbox{position:relative;height:320px}
   .legend{font-size:.8rem;color:var(--muted);margin-top:6px}
+  .condbar{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:.85rem;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -264,6 +466,7 @@ _DASHBOARD_TEMPLATE = r"""<!doctype html>
   <button class="tab active" data-view="compare">Compare all</button>
   <button class="tab" data-view="cards">Model cards</button>
   <button class="tab" data-view="focus">Single model</button>
+  <span class="condbar" id="condBar"></span>
 </div>
 <main>
   <section id="compare" class="view active">
@@ -271,12 +474,18 @@ _DASHBOARD_TEMPLATE = r"""<!doctype html>
     <div class="grid" style="margin-top:24px">
       <div class="card"><h3>Type stability by model</h3>
         <div class="chartbox"><canvas id="stabChart"></canvas></div>
-        <div class="legend">Share of valid runs on each model's modal (most frequent) type. Higher = more consistent "personality".</div>
+        <div class="legend">Share of valid runs on each model's modal (most frequent) type, with 95% Wilson CI (hover a bar). Dashed reference line = random-responder baseline. Higher = more consistent "personality" -- but only meaningful above the baseline.</div>
       </div>
       <div class="card"><h3>Preference dispersion per axis</h3>
         <select id="axisPick"></select>
         <div class="chartbox"><canvas id="dispChart"></canvas></div>
-        <div class="legend">Mean preference toward the second pole (I/N/T/P) with ±1σ error bars across runs.</div>
+        <div class="legend">Mean preference toward the second pole (I/N/T/P) per model. Hover a bar for σ across runs (not drawn as error bars).</div>
+      </div>
+    </div>
+    <div class="grid" style="margin-top:20px">
+      <div class="card" style="grid-column:1/-1"><h3>Stability vs. distance from midpoint (all models × axes)</h3>
+        <div class="chartbox"><canvas id="scatterChart"></canvas></div>
+        <div class="legend">Each point is one model's axis. X = |mean preference − 50|, i.e. how far from a coin flip the average answer is. Y = modal-letter frequency (stability). Points near the bottom-right corner (far from the midpoint but still "unstable") would be surprising; points near the top-left (near the midpoint but reported as "stable") are the dichotomization artifact: a hair's-breadth preference gets rounded to a confident-looking letter every run just because it rarely crosses 50%.</div>
       </div>
     </div>
   </section>
@@ -302,17 +511,26 @@ _DASHBOARD_TEMPLATE = r"""<!doctype html>
 <script>
 const DATA = __DATA_JSON__;
 const AXES = DATA.axes_order;
-const MODELS = DATA.models;
 const PAL = DATA.palette;
+const BASELINE = DATA.baseline;
+const CONDITIONS = DATA.condition_order;
+let MODELS = DATA.conditions[CONDITIONS[0]];
 const charts = {};
 
 document.getElementById('subtitle').textContent =
-  `${MODELS.length} models · generated ${DATA.generated}`;
+  `${DATA.conditions[CONDITIONS[0]].length} models · generated ${DATA.generated}`;
+
+/* ---- condition selector (only shown if >1 condition present) ---- */
+if (CONDITIONS.length > 1) {
+  const bar = document.getElementById('condBar');
+  const label = document.createElement('span'); label.textContent = 'Condition:';
+  const sel = document.createElement('select');
+  CONDITIONS.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o); });
+  sel.onchange = () => { MODELS = DATA.conditions[sel.value]; renderAll(); };
+  bar.appendChild(label); bar.appendChild(sel);
+}
 
 function color(i){return PAL[i % PAL.length];}
-function pctToward(a){ // preference toward pole_high (second letter), 0-100
-  return a ? a.mean_pct_high : 50;
-}
 
 /* ---- tabs ---- */
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
@@ -324,20 +542,21 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
 
 /* ---- comparison table ---- */
 function buildTable(){
-  let h = '<table><thead><tr><th>Model</th><th>Provider</th><th>Type</th><th>Stability</th><th>Valid</th>';
+  let h = '<table><thead><tr><th>Model</th><th>Provider</th><th>Type</th><th>Stability (95% CI)</th><th>Reliable</th><th>Valid</th>';
   AXES.forEach(ax=>h+=`<th>${ax}</th>`);
   h+='</tr></thead><tbody>';
   MODELS.forEach((m,i)=>{
     const stab = Math.round(m.modal_type_freq*100);
+    const ci = m.modal_type_freq_ci ? `[${Math.round(m.modal_type_freq_ci[0]*100)},${Math.round(m.modal_type_freq_ci[1]*100)}]` : '';
     h+=`<tr><td>${m.model_name}</td><td>${m.provider}</td>`+
        `<td class="type">${m.modal_type}</td>`+
-       `<td><span class="bar" style="width:${stab}px;background:${color(i)}"></span> ${stab}%</td>`+
+       `<td><span class="bar" style="width:${stab}px;background:${color(i)}"></span> ${stab}% ${ci}</td>`+
+       `<td>${m.reliable? '✓' : '⚠ low N'}</td>`+
        `<td>${m.n_valid}/${m.n_total}</td>`;
     AXES.forEach(ax=>{
       const a=m.axes[ax];
       if(!a){h+='<td>—</td>';return;}
-      const pct = a.modal_letter===a.pole_high? a.mean_pct_high : (100-a.mean_pct_high);
-      h+=`<td><b>${a.modal_letter}</b> ${Math.round(a.modal_freq*100)}% · ${Math.round(pct)}%</td>`;
+      h+=`<td><b>${a.modal_letter}</b> ${Math.round(a.modal_freq*100)}%</td>`;
     });
     h+='</tr>';
   });
@@ -345,15 +564,28 @@ function buildTable(){
   document.getElementById('table-wrap').innerHTML=h;
 }
 
-/* ---- stability bar ---- */
+/* ---- stability bar (with baseline reference line + CI in tooltip) ---- */
 function buildStab(){
-  new Chart(document.getElementById('stabChart'),{
+  if(charts.stab) charts.stab.destroy();
+  const datasets = [{label:'Type stability %',
+    data:MODELS.map(m=>Math.round(m.modal_type_freq*100)),
+    backgroundColor:MODELS.map((_,i)=>color(i))}];
+  if (BASELINE) {
+    datasets.push({
+      type:'line', label:'Random baseline',
+      data:MODELS.map(()=>Math.round(BASELINE.modal_type_freq_mean*100)),
+      borderColor:'#999', borderDash:[6,4], pointRadius:0, borderWidth:2, fill:false,
+    });
+  }
+  charts.stab = new Chart(document.getElementById('stabChart'),{
     type:'bar',
-    data:{labels:MODELS.map(m=>m.model_name),
-      datasets:[{label:'Type stability %',
-        data:MODELS.map(m=>Math.round(m.modal_type_freq*100)),
-        backgroundColor:MODELS.map((_,i)=>color(i))}]},
-    options:{indexAxis:'y',plugins:{legend:{display:false}},
+    data:{labels:MODELS.map(m=>m.model_name), datasets},
+    options:{indexAxis:'y',
+      plugins:{legend:{display: !!BASELINE},
+        tooltip:{callbacks:{afterLabel:(c)=>{
+          const m=MODELS[c.dataIndex]; if(!m || !m.modal_type_freq_ci) return '';
+          return `95% CI [${Math.round(m.modal_type_freq_ci[0]*100)},${Math.round(m.modal_type_freq_ci[1]*100)}]`;
+        }}}},
       scales:{x:{max:100,title:{display:true,text:'% of runs on modal type'}}}}
   });
 }
@@ -361,6 +593,7 @@ function buildStab(){
 /* ---- dispersion per axis ---- */
 function buildDisp(){
   const sel=document.getElementById('axisPick');
+  sel.innerHTML = '';
   AXES.forEach(ax=>{const o=document.createElement('option');o.value=ax;o.textContent=ax;sel.appendChild(o);});
   const draw=()=>{
     const ax=sel.value;
@@ -376,22 +609,48 @@ function buildDisp(){
           const m=MODELS[c.dataIndex];const a=m.axes[ax];
           return a?`σ=${a.std_pct_high}`:'';}}}},
         scales:{y:{min:0,max:100,title:{display:true,
-          text:`0=${AXES.length?'first pole':''} … 100=second pole`}}}}
+          text:`0=first pole … 100=second pole`}}}}
     });
   };
   sel.onchange=draw; draw();
 }
 
+/* ---- scatter: stability vs distance from midpoint, per model x axis ---- */
+function buildScatter(){
+  if(charts.scatter) charts.scatter.destroy();
+  const datasets = AXES.map((ax,ai)=>({
+    label: ax,
+    backgroundColor: color(ai),
+    data: MODELS.filter(m=>m.axes[ax]).map(m=>({
+      x: m.axes[ax].dist_from_midpoint,
+      y: Math.round(m.axes[ax].modal_freq*100),
+      _model: m.model_name,
+    })),
+  }));
+  charts.scatter = new Chart(document.getElementById('scatterChart'),{
+    type:'scatter',
+    data:{datasets},
+    options:{
+      plugins:{tooltip:{callbacks:{label:(c)=>`${c.raw._model} (${c.dataset.label}): dist=${c.raw.x.toFixed(0)}, stability=${c.raw.y}%`}}},
+      scales:{
+        x:{min:0,max:50,title:{display:true,text:'distance from midpoint (0=coin flip, 50=unanimous)'}},
+        y:{min:0,max:100,title:{display:true,text:'modal-letter stability %'}},
+      }
+    }
+  });
+}
+
 /* ---- model cards ---- */
 function buildCards(){
   const grid=document.getElementById('cardGrid');
+  grid.innerHTML = '';
   MODELS.forEach((m,i)=>{
     const div=document.createElement('div');div.className='card';
     let axisTxt=AXES.map(ax=>{const a=m.axes[ax];return a?`${ax}: <b>${a.modal_letter}</b> ${Math.round(a.modal_freq*100)}%`:`${ax}: —`;}).join(' · ');
     div.innerHTML=`<h3>${m.model_name} <span style="color:${color(i)}">■</span></h3>`+
       `<div class="meta">${m.provider} · ${m.model_id}</div>`+
       `<div class="type" style="font-size:1.3rem;letter-spacing:2px">${m.modal_type}</div>`+
-      `<div class="meta">stable ${Math.round(m.modal_type_freq*100)}% · valid ${m.n_valid}/${m.n_total}</div>`+
+      `<div class="meta">stable ${Math.round(m.modal_type_freq*100)}% ${m.reliable?'':'⚠ low N'} · valid ${m.n_valid}/${m.n_total}</div>`+
       `<div style="font-size:.83rem;margin-top:8px">${axisTxt}</div>`;
     grid.appendChild(div);
   });
@@ -400,6 +659,7 @@ function buildCards(){
 /* ---- focus view ---- */
 function buildFocus(){
   const sel=document.getElementById('modelPick');
+  sel.innerHTML = '';
   MODELS.forEach((m,i)=>{const o=document.createElement('option');o.value=i;o.textContent=m.model_name;sel.appendChild(o);});
   const draw=()=>{
     const m=MODELS[+sel.value];const i=+sel.value;
@@ -421,19 +681,25 @@ function buildFocus(){
       options:{plugins:{legend:{display:false}},scales:{y:{min:0,max:100}}}
     });
     let rows=AXES.map(ax=>{const a=m.axes[ax];if(!a)return `<li>${ax}: —</li>`;
-      return `<li><b>${ax}</b>: modal ${a.modal_letter} (${Math.round(a.modal_freq*100)}% of runs), `+
-        `mean pref→${a.pole_high} ${Math.round(a.mean_pct_high)}% (σ=${a.std_pct_high}), `+
-        `letters ${Object.entries(a.letter_counts).map(([k,v])=>k+'×'+v).join(', ')}</li>`;}).join('');
+      const alpha = (a.cronbach_alpha===null||a.cronbach_alpha===undefined)?'n/a':a.cronbach_alpha;
+      return `<li><b>${ax}</b>: modal ${a.modal_letter} (${Math.round(a.modal_freq*100)}% of runs, `+
+        `CI [${Math.round(a.modal_freq_ci[0]*100)},${Math.round(a.modal_freq_ci[1]*100)}]), `+
+        `mean pref→${a.pole_high} ${Math.round(a.mean_pct_high)}% (σ=${a.std_pct_high}, dist=${a.dist_from_midpoint}pt), `+
+        `α=${alpha}, letters ${Object.entries(a.letter_counts).map(([k,v])=>k+'×'+v).join(', ')}</li>`;}).join('');
     let inv = m.n_invalid? `<p class="meta">Invalid runs: ${m.n_invalid}. ${(m.invalid_reasons||[]).slice(0,2).join(' | ')}</p>`:'';
     document.getElementById('focusInfo').innerHTML=
-      `<h3>${m.model_name} — ${m.modal_type}</h3>`+
-      `<div class="meta">${m.provider} · ${m.model_id} · types seen: ${Object.entries(m.type_counts).map(([k,v])=>k+'×'+v).join(', ')||'—'}</div>`+
+      `<h3>${m.model_name} — ${m.modal_type} ${m.reliable?'':'⚠ low N'}</h3>`+
+      `<div class="meta">${m.provider} · ${m.model_id} · answered w/o retry: ${Math.round(m.pct_first_attempt*100)}% · types seen: ${Object.entries(m.type_counts).map(([k,v])=>k+'×'+v).join(', ')||'—'}</div>`+
       `<ul style="font-size:.85rem">${rows}</ul>${inv}`;
   };
   sel.onchange=draw; draw();
 }
 
-buildTable(); buildStab(); buildDisp(); buildCards(); buildFocus();
+function renderAll(){
+  document.getElementById('subtitle').textContent = `${MODELS.length} models · generated ${DATA.generated}`;
+  buildTable(); buildStab(); buildDisp(); buildScatter(); buildCards(); buildFocus();
+}
+renderAll();
 </script>
 </body>
 </html>
@@ -441,17 +707,30 @@ buildTable(); buildStab(); buildDisp(); buildCards(); buildFocus();
 
 
 def write_reports(
-    stats: list[ModelStats], axes_order: list[str], report_dir: str | Path
+    stats: list[ModelStats],
+    axes_order: list[str],
+    report_dir: str | Path,
+    inst: Instrument | None = None,
+    n_runs: int | None = None,
 ) -> dict[str, Path]:
     out = Path(report_dir)
     out.mkdir(parents=True, exist_ok=True)
     today = date.today().isoformat()
+
+    baseline = None
+    if inst is not None and n_runs:
+        baseline = random_baseline_stats(inst, n_runs)
+
     paths = {
         "markdown": out / f"comparatif_{today}.md",
         "dashboard": out / "dashboard.html",
+        "csv": out / f"summary_{today}.csv",
         "paper": out / f"paper_{today}.md",
     }
-    paths["markdown"].write_text(render_markdown(stats, axes_order), encoding="utf-8")
-    paths["dashboard"].write_text(render_dashboard(stats, axes_order), encoding="utf-8")
-    paths["paper"].write_text(render_paper(stats, axes_order), encoding="utf-8")
+    paths["markdown"].write_text(render_markdown(stats, axes_order, baseline=baseline), encoding="utf-8")
+    paths["dashboard"].write_text(
+        render_dashboard(stats, axes_order, baseline=baseline), encoding="utf-8"
+    )
+    paths["csv"].write_text(render_csv(stats, axes_order), encoding="utf-8")
+    paths["paper"].write_text(render_paper(stats, axes_order, baseline=baseline), encoding="utf-8")
     return paths

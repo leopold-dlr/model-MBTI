@@ -80,6 +80,11 @@ def load_instrument(path: str | Path) -> Instrument:
 
 
 def _validate(inst: Instrument) -> None:
+    if not inst.items:
+        raise ValueError(
+            f"Instrument '{inst.name}' has no items -- refusing to load. "
+            "(If this is a scaffold file, populate its `items:` list first.)"
+        )
     ids = [it.id for it in inst.items]
     if len(ids) != len(set(ids)):
         raise ValueError("Instrument has duplicate item ids.")

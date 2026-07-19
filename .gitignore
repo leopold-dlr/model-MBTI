@@ -16,3 +16,4 @@ data/runs/*.json
 reports/*.html
 reports/comparatif_*.md
 reports/paper_*.md
+reports/summary_*.csv
