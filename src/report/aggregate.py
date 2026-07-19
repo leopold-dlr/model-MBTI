@@ -123,13 +123,25 @@ class AxisStats:
     mean_raw_sum: float
     dist_from_midpoint: float             # |mean_pct_high - 50|, 0-50; 0 = pure coin flip
     cronbach_alpha: float | None = None    # None if undefined (see cronbach_alpha())
+    trait_low: str | None = None          # human-readable trait name for pole_low
+    trait_high: str | None = None         # human-readable trait name for pole_high
+
+    @property
+    def modal_trait(self) -> str:
+        """The modal letter's human-readable trait name, falling back to the
+        bare letter if the instrument doesn't define trait_low/trait_high."""
+        name = self.trait_high if self.modal_letter == self.pole_high else self.trait_low
+        return name or self.modal_letter
 
     def to_dict(self) -> dict:
         return {
             "axis": self.axis,
             "pole_low": self.pole_low,
             "pole_high": self.pole_high,
+            "trait_low": self.trait_low,
+            "trait_high": self.trait_high,
             "modal_letter": self.modal_letter,
+            "modal_trait": self.modal_trait,
             "modal_freq": round(self.modal_freq, 4),
             "modal_freq_ci": [round(v, 4) for v in self.modal_freq_ci],
             "letter_counts": self.letter_counts,
@@ -256,15 +268,21 @@ def aggregate_group(
             mean_pct_high = statistics.fmean(pct_high)
 
             alpha = None
+            trait_low = trait_high = None
             if inst is not None:
                 matrix = _axis_item_matrix(inst, axis, valid)
                 if matrix:
                     alpha = cronbach_alpha(matrix)
+                axis_meta = inst.axes.get(axis, {})
+                trait_low = axis_meta.get("trait_low")
+                trait_high = axis_meta.get("trait_high")
 
             axes[axis] = AxisStats(
                 axis=axis,
                 pole_low=pole_low,
                 pole_high=pole_high,
+                trait_low=trait_low,
+                trait_high=trait_high,
                 modal_letter=modal_letter,
                 modal_freq=modal_count / len(valid),
                 modal_freq_ci=wilson_ci(modal_count, len(valid)),

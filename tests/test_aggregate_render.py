@@ -13,6 +13,7 @@ from src.report.render import render_csv, render_dashboard, render_markdown, ren
 from src.scoring.mbti_scorer import score_answers
 
 INSTRUMENT = Path(__file__).resolve().parent.parent / "config" / "instrument" / "oejts_32.yaml"
+IPIP50 = Path(__file__).resolve().parent.parent / "config" / "instrument" / "ipip50_bigfive.yaml"
 
 
 def _make_record(
@@ -24,8 +25,9 @@ def _make_record(
     prompt_variant="default",
     experiment_id=None,
     succeeded_at_attempt=0,
+    inst=None,
 ):
-    inst = load_instrument(INSTRUMENT)
+    inst = inst or load_instrument(INSTRUMENT)
     rec = {
         "model_name": name,
         "provider": "test",
@@ -181,6 +183,33 @@ def test_plain_language_summary_present_in_markdown():
     stats = aggregate_all(_synthetic_records(), inst=inst)
     md = render_markdown(stats, inst.type_order)
     assert "In plain terms" in md
+
+
+def test_paper_and_markdown_describe_the_actual_instrument_used():
+    """Regression test: render_paper/render_markdown used to hardcode
+    "OEJTS 1.2", "32-item", and "four MBTI dichotomies (E/I, S/N, T/F, J/P)"
+    regardless of which instrument was actually administered -- so a report
+    built from an IPIP-50 (Big Five) run falsely described itself as an
+    OEJTS/MBTI study. Both renderers must reflect the instrument passed in."""
+    ipip = load_instrument(IPIP50)
+    ext = {it.id: 5 for it in ipip.items}
+    records = [_make_record("m", ext, run_index=i, inst=ipip) for i in range(5)]
+    stats = aggregate_all(records, inst=ipip)
+
+    paper = render_paper(stats, ipip.type_order, inst=ipip)
+    md = render_markdown(stats, ipip.type_order, inst=ipip)
+    assert "IPIP-50-BigFive" in paper
+    assert "50 items" in paper
+    assert "OEJTS" not in paper
+    assert "32-item" not in paper
+    assert "four MBTI dichotomies" not in paper
+    assert "OEJTS" not in md
+
+    oejts = load_instrument(INSTRUMENT)
+    oejts_stats = aggregate_all(_synthetic_records(), inst=oejts)
+    oejts_paper = render_paper(oejts_stats, oejts.type_order, inst=oejts)
+    assert "OEJTS" in oejts_paper
+    assert "32 items" in oejts_paper
 
 
 def test_renders_do_not_crash():

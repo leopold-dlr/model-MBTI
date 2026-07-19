@@ -23,10 +23,30 @@ def test_axes_balanced():
 
 def test_axis_poles():
     inst = load_instrument(OEJTS)
-    assert inst.axes["EI"] == {"pole_low": "E", "pole_high": "I"}
-    assert inst.axes["SN"] == {"pole_low": "S", "pole_high": "N"}
-    assert inst.axes["TF"] == {"pole_low": "F", "pole_high": "T"}
-    assert inst.axes["JP"] == {"pole_low": "J", "pole_high": "P"}
+    expected = {
+        "EI": ("E", "I"),
+        "SN": ("S", "N"),
+        "TF": ("F", "T"),
+        "JP": ("J", "P"),
+    }
+    for axis, (low, high) in expected.items():
+        assert inst.axes[axis]["pole_low"] == low
+        assert inst.axes[axis]["pole_high"] == high
+
+
+def test_axis_trait_names_present():
+    inst = load_instrument(OEJTS)
+    # trait_low/trait_high are the human-readable names used in reports, on
+    # top of the bare pole_low/pole_high letters used for the type string.
+    expected = {
+        "EI": ("Extraversion", "Introversion"),
+        "SN": ("Sensing", "Intuition"),
+        "TF": ("Feeling", "Thinking"),
+        "JP": ("Judging", "Perceiving"),
+    }
+    for axis, (low, high) in expected.items():
+        assert inst.axes[axis]["trait_low"] == low
+        assert inst.axes[axis]["trait_high"] == high
 
 
 def test_scale_bounds():
@@ -55,6 +75,19 @@ def test_ipip50_loads_50_items_5_axes_of_10():
     assert inst.type_order == ["EXTR", "AGRE", "CONS", "STAB", "INTL"]
     for axis in inst.type_order:
         assert len(inst.items_for_axis(axis)) == 10, axis
+
+
+def test_ipip50_trait_names_present_and_readable():
+    # pole_low/pole_high stay generic ("Lo"/"Hi") on purpose (Big Five is
+    # dimensional, not typological -- see file header), but trait_low/high
+    # must carry real, non-empty trait names for reports to be legible.
+    inst = load_instrument(IPIP50)
+    for axis in inst.type_order:
+        poles = inst.axes[axis]
+        assert poles["pole_low"] == "Lo"
+        assert poles["pole_high"] == "Hi"
+        assert poles["trait_low"] and poles["trait_low"] != "Lo"
+        assert poles["trait_high"] and poles["trait_high"] != "Hi"
 
 
 def test_ipip50_keyed_counts_match_source():

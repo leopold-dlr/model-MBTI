@@ -57,6 +57,30 @@ def _fmt_ci(ci: tuple[float, float] | list[float]) -> str:
     return f"[{lo*100:.0f},{hi*100:.0f}]"
 
 
+def _instrument_label(inst: Instrument | None) -> str:
+    if inst is None:
+        return "the instrument"
+    return f"{inst.name} {inst.version}".strip()
+
+
+def _instrument_validity_note(inst: Instrument | None) -> str:
+    """Instrument-specific contested-validity caveat. Must not hardcode
+    OEJTS/MBTI language: this report is also generated for IPIP-50 (Big
+    Five), whose validity concerns and citation differ."""
+    if inst is None or inst.name == "OEJTS":
+        return (
+            "the OEJTS is an open MBTI-style instrument whose validity is "
+            "contested even for humans."
+        )
+    if inst.name == "IPIP-50-BigFive":
+        return (
+            "the Big Five / IPIP-50 is more broadly accepted in personality "
+            "psychology than MBTI-style typologies, but its validity for "
+            "humans still does not transfer automatically to an LLM."
+        )
+    return f"{_instrument_label(inst)} carries its own validity limits for humans, which do not automatically transfer to an LLM."
+
+
 # --------------------------------------------------------------------------- #
 # Markdown comparative report
 # --------------------------------------------------------------------------- #
@@ -64,6 +88,7 @@ def render_markdown(
     stats: list[ModelStats],
     axes_order: list[str],
     baseline: dict | None = None,
+    inst: Instrument | None = None,
 ) -> str:
     groups = _group_by_condition(stats)
     lines = [
@@ -156,7 +181,7 @@ def render_markdown(
                 "" if s.reliable else f" — **below min_valid_runs threshold, treat with caution**"
             )
             lines += [
-                f"**In plain terms:** {_plain_summary(s)}",
+                f"**In plain terms:** {_plain_summary(s, axes_order)}",
                 "",
                 f"- Modal type: **{s.modal_type}** (stable in {s.modal_type_freq*100:.0f}% "
                 f"of runs, 95% CI {_fmt_ci(s.modal_type_freq_ci)}){reliability_note}",
@@ -167,7 +192,7 @@ def render_markdown(
                 "",
             ]
             axis_rows = [
-                "| Axis | Letter (stability, 95% CI) | Mean preference | Dispersion (σ) | Distance from midpoint | Cronbach α |",
+                "| Axis | Trait (stability, 95% CI) | Mean preference | Dispersion (σ) | Distance from midpoint | Cronbach α |",
                 "|---|---|---|---|---|---|",
             ]
             for axis in axes_order:
@@ -175,9 +200,10 @@ def render_markdown(
                 if a is None:
                     continue
                 alpha_str = f"{a.cronbach_alpha:.2f}" if a.cronbach_alpha is not None else "n/a"
+                pref_name = a.trait_high or a.pole_high
                 axis_rows.append(
-                    f"| {axis} | **{a.modal_letter}** ({a.modal_freq*100:.0f}%, "
-                    f"{_fmt_ci(a.modal_freq_ci)}) | {a.pole_high}={a.mean_pct_high:.0f}% "
+                    f"| {axis} | **{a.modal_trait}** ({a.modal_freq*100:.0f}%, "
+                    f"{_fmt_ci(a.modal_freq_ci)}) | {pref_name}={a.mean_pct_high:.0f}% "
                     f"| {a.std_pct_high:.1f} | {a.dist_from_midpoint:.0f}pt | {alpha_str} |"
                 )
             lines += axis_rows
@@ -186,11 +212,11 @@ def render_markdown(
                 lines.append(_invalid_summary(s))
             lines.append("")
 
+    instrument_note = _instrument_validity_note(inst)
     lines += [
         "## Methodological caveats",
         "",
-        "See the project README. In short: the OEJTS is an open MBTI-style "
-        "instrument whose validity is contested even for humans. Applied to an "
+        f"See the project README. In short: {instrument_note} Applied to an "
         "LLM it measures a *prompt-conditioned text-output tendency*, not a "
         "personality trait. Treat this as exploratory, not psychometric. A low "
         "or undefined Cronbach's alpha on an axis means that axis's items don't "
@@ -201,25 +227,55 @@ def render_markdown(
     return "\n".join(lines)
 
 
-def _plain_summary(s: ModelStats) -> str:
-    """One plain-English sentence summarizing a model's result, meant to be
-    readable without knowing what a Wilson CI or Cronbach's alpha is. The
-    detailed stats immediately below back it up; this is the fast read."""
+def _join_names(names: list[str]) -> str:
+    if not names:
+        return ""
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + f", and {names[-1]}"
+
+
+def _plain_summary(s: ModelStats, axes_order: list[str]) -> str:
+    """One plain-English sentence naming the model's actual traits (not just
+    an unexplained 4-letter code), meant to be readable without knowing what
+    a Wilson CI or Cronbach's alpha is. The detailed stats immediately below
+    back it up; this is the fast read -- and the point of the whole exercise
+    ("what characteristics does this model show"), not the code string."""
     n = s.n_valid
-    if s.modal_type_freq == 1.0:
-        consistency = f"answered **{s.modal_type}** in all {n} of its valid runs"
-    else:
-        consistency = (
-            f"answered **{s.modal_type}** most often ({s.modal_type_freq*100:.0f}% of its "
-            f"{n} valid runs), but landed on a different type the rest of the time"
-        )
+    axis_items = [(ax, s.axes[ax]) for ax in axes_order if ax in s.axes]
+    traits_str = _join_names([a.modal_trait for _, a in axis_items])
+
     if not s.reliable:
-        caveat = f" — only {n} runs so far, too few to call this a stable trait yet."
+        confidence = f"only {n} runs so far, too few to call this a stable trait yet"
     elif s.modal_type_freq == 1.0:
-        caveat = " — consistent across every run in this test."
+        confidence = "consistent across every run in this test"
     else:
-        caveat = " — check the confidence interval before treating this as \"the\" type."
-    return f"`{s.model_name}` {consistency}{caveat}"
+        confidence = (
+            f"held in {s.modal_type_freq*100:.0f}% of runs -- check the confidence "
+            "interval before treating this as fixed"
+        )
+
+    clearest_str = weakest_str = ""
+    if axis_items:
+        clearest_axis, clearest = max(axis_items, key=lambda kv: kv[1].dist_from_midpoint)
+        weakest_axis, weakest = min(axis_items, key=lambda kv: kv[1].dist_from_midpoint)
+        clearest_pref = (
+            clearest.mean_pct_high if clearest.modal_letter == clearest.pole_high
+            else 100 - clearest.mean_pct_high
+        )
+        clearest_str = f" Its clearest trait is {clearest.modal_trait} ({clearest_pref:.0f}% preference)."
+        if weakest_axis != clearest_axis:
+            wlow = weakest.trait_low or weakest.pole_low
+            whigh = weakest.trait_high or weakest.pole_high
+            weakest_str = (
+                f" Its least clear-cut trait is {wlow} vs {whigh} "
+                f"({weakest.dist_from_midpoint:.0f}pt from an even split)."
+            )
+
+    return (
+        f"`{s.model_name}` leans {traits_str} in this test ({confidence})."
+        f"{clearest_str}{weakest_str} (Type code: **{s.modal_type}**.)"
+    )
 
 
 def _fmt_counts(counts: dict) -> str:
@@ -305,8 +361,11 @@ def render_paper(
     stats: list[ModelStats],
     axes_order: list[str],
     baseline: dict | None = None,
+    inst: Instrument | None = None,
 ) -> str:
     groups = _group_by_condition(stats)
+    instrument_label = _instrument_label(inst)
+    n_items = len(inst.items) if inst is not None else None
     # Prefer a non-"default" (i.e. fixed-temperature, controlled) condition for
     # the headline cross-model comparison; providers' differing default
     # temperatures are a confound for comparing stability across models.
@@ -321,26 +380,27 @@ def render_paper(
     least_stable = min(comparable, key=lambda s: s.modal_type_freq, default=None)
 
     lines = [
-        "# Do Large Language Models Have a Personality? An OEJTS Arena",
+        f"# Do Large Language Models Have a Personality? — {instrument_label} Arena",
         "",
         f"_Draft generated {date.today().isoformat()}. Auto-filled from run data; "
         "edit the prose before publishing._",
         "",
         "## 1. Context & method",
         "",
-        "We administered the Open Extended Jungian Type Scales (OEJTS 1.2), a "
-        "free public-domain instrument covering the four MBTI dichotomies "
-        "(E/I, S/N, T/F, J/P), to a portfolio of large language models. Each "
-        "model answered the 32-item questionnaire in a single request, in "
-        "English, with a system prompt instructing it to answer *as itself* "
-        "rather than role-playing a character. Left/right anchor polarity was "
-        "counterbalanced per run (half of each axis's items displayed with "
-        "poles swapped, scored accordingly) to control for position/"
-        "acquiescence bias. We repeated this independently N times per model "
-        "under at least one fixed-temperature condition (to keep sampling "
-        "entropy comparable across providers) to measure not just the type but "
-        "its run-to-run **stability**, reported with 95% Wilson confidence "
-        "intervals and against a Monte Carlo random-responder baseline.",
+        f"We administered the {instrument_label} instrument"
+        + (f" ({n_items} items, covering the axes {', '.join(axes_order)})" if n_items else "")
+        + ", a free public-domain questionnaire, to a portfolio of large "
+        "language models. Each model answered the full questionnaire in a "
+        "single request, in English, with a system prompt instructing it to "
+        "answer *as itself* rather than role-playing a character. Left/right "
+        "anchor polarity was counterbalanced per run (half of each axis's "
+        "items displayed with poles swapped, scored accordingly) to control "
+        "for position/acquiescence bias. We repeated this independently N "
+        "times per model under at least one fixed-temperature condition (to "
+        "keep sampling entropy comparable across providers) to measure not "
+        "just the type but its run-to-run **stability**, reported with 95% "
+        "Wilson confidence intervals and against a Monte Carlo "
+        "random-responder baseline.",
         "",
         f"Models tested: {', '.join(f'`{n}`' for n in sorted({s.model_name for s in stats}))}.",
         f"Primary cross-model comparison uses condition `{primary_label}`.",
@@ -379,11 +439,12 @@ def render_paper(
         lines.append(
             f"- **{s.model_name}** ({s.provider}): modal type **{s.modal_type}** "
             f"in {s.modal_type_freq*100:.0f}% of runs (CI {_fmt_ci(s.modal_type_freq_ci)})"
-            f"{reliability_flag}. Its firmest axis is "
-            f"{steadiest.axis} (modal {steadiest.modal_letter}, "
+            f"{reliability_flag}. Its firmest trait is "
+            f"{steadiest.modal_trait} ({steadiest.axis}, "
             f"{steadiest.modal_freq*100:.0f}%); its most variable is "
-            f"{waviest.axis} ({waviest.modal_freq*100:.0f}% modal, "
-            f"σ={waviest.std_pct_high:.1f})."
+            f"{waviest.axis} ({waviest.pole_low}/{waviest.trait_low or waviest.pole_low} vs "
+            f"{waviest.pole_high}/{waviest.trait_high or waviest.pole_high}, "
+            f"{waviest.modal_freq*100:.0f}% modal, σ={waviest.std_pct_high:.1f})."
         )
     lines += ["", "## 3. Cross-model comparison", ""]
     if most_stable and least_stable:
@@ -414,8 +475,8 @@ def render_paper(
         "",
         "These numbers describe *how the models answer a self-report survey*, "
         "conditioned on prompt wording, language, and sampling temperature — not "
-        "a validated personality trait. The MBTI/OEJTS framework is contested in "
-        "psychology even for humans. The multi-run design, confidence intervals, "
+        f"a validated personality trait. {_instrument_validity_note(inst)} "
+        "The multi-run design, confidence intervals, "
         "random-responder baseline, and per-axis Cronbach's alpha are meant to "
         "foreground exactly this fragility: a type that changes from run to run, "
         "or an axis with low inter-item consistency, is a caution against "
@@ -640,11 +701,14 @@ function buildDisp(){
   AXES.forEach(ax=>{const o=document.createElement('option');o.value=ax;o.textContent=ax;sel.appendChild(o);});
   const draw=()=>{
     const ax=sel.value;
+    const sample = MODELS.find(m=>m.axes[ax]);
+    const lowName = sample ? (sample.axes[ax].trait_low || sample.axes[ax].pole_low) : ax;
+    const highName = sample ? (sample.axes[ax].trait_high || sample.axes[ax].pole_high) : ax;
     if(charts.disp) charts.disp.destroy();
     charts.disp=new Chart(document.getElementById('dispChart'),{
       type:'bar',
       data:{labels:MODELS.map(m=>m.model_name),
-        datasets:[{label:`mean pref toward ${ax[1]}`,
+        datasets:[{label:`mean preference toward ${highName}`,
           data:MODELS.map(m=>m.axes[ax]?Math.round(m.axes[ax].mean_pct_high):null),
           backgroundColor:MODELS.map((_,i)=>color(i))}]},
       options:{plugins:{legend:{display:false},
@@ -652,7 +716,7 @@ function buildDisp(){
           const m=MODELS[c.dataIndex];const a=m.axes[ax];
           return a?`σ=${a.std_pct_high}`:'';}}}},
         scales:{y:{min:0,max:100,title:{display:true,
-          text:`0=first pole … 100=second pole`}}}}
+          text:`0=${lowName} … 100=${highName}`}}}}
     });
   };
   sel.onchange=draw; draw();
@@ -689,7 +753,7 @@ function buildCards(){
   grid.innerHTML = '';
   MODELS.forEach((m,i)=>{
     const div=document.createElement('div');div.className='card';
-    let axisTxt=AXES.map(ax=>{const a=m.axes[ax];return a?`${ax}: <b>${a.modal_letter}</b> ${Math.round(a.modal_freq*100)}%`:`${ax}: —`;}).join(' · ');
+    let axisTxt=AXES.map(ax=>{const a=m.axes[ax];return a?`${ax}: <b>${a.modal_trait}</b> ${Math.round(a.modal_freq*100)}%`:`${ax}: —`;}).join(' · ');
     div.innerHTML=`<h3>${m.model_name} <span style="color:${color(i)}">■</span></h3>`+
       `<div class="meta">${m.provider} · ${m.model_id}</div>`+
       `<div class="type" style="font-size:1.3rem;letter-spacing:2px">${m.modal_type}</div>`+
@@ -710,7 +774,7 @@ function buildFocus(){
     if(charts.fstab)charts.fstab.destroy();
     charts.radar=new Chart(document.getElementById('focusRadar'),{
       type:'radar',
-      data:{labels:AXES.map(ax=>`${ax} (→${ax[1]})`),
+      data:{labels:AXES.map(ax=>{const a=m.axes[ax]; const name=a?(a.trait_high||a.pole_high):ax; return `${ax}: → ${name}`;}),
         datasets:[{label:m.model_name,
           data:AXES.map(ax=>m.axes[ax]?m.axes[ax].mean_pct_high:50),
           borderColor:color(i),backgroundColor:color(i)+'33',pointBackgroundColor:color(i)}]},
@@ -725,13 +789,18 @@ function buildFocus(){
     });
     let rows=AXES.map(ax=>{const a=m.axes[ax];if(!a)return `<li>${ax}: —</li>`;
       const alpha = (a.cronbach_alpha===null||a.cronbach_alpha===undefined)?'n/a':a.cronbach_alpha;
-      return `<li><b>${ax}</b>: modal ${a.modal_letter} (${Math.round(a.modal_freq*100)}% of runs, `+
+      return `<li><b>${ax}: ${a.modal_trait}</b> (${Math.round(a.modal_freq*100)}% of runs, `+
         `CI [${Math.round(a.modal_freq_ci[0]*100)},${Math.round(a.modal_freq_ci[1]*100)}]), `+
-        `mean pref→${a.pole_high} ${Math.round(a.mean_pct_high)}% (σ=${a.std_pct_high}, dist=${a.dist_from_midpoint}pt), `+
+        `mean pref→${a.trait_high||a.pole_high} ${Math.round(a.mean_pct_high)}% (σ=${a.std_pct_high}, dist=${a.dist_from_midpoint}pt), `+
         `α=${alpha}, letters ${Object.entries(a.letter_counts).map(([k,v])=>k+'×'+v).join(', ')}</li>`;}).join('');
     let inv = m.n_invalid? `<p class="meta">Invalid runs: ${m.n_invalid}. ${(m.invalid_reasons||[]).slice(0,2).join(' | ')}</p>`:'';
+    const traitNames = AXES.filter(ax=>m.axes[ax]).map(ax=>m.axes[ax].modal_trait);
+    const headline = traitNames.length
+      ? `Leans ${traitNames.slice(0,-1).join(', ')}${traitNames.length>1?', and ':''}${traitNames[traitNames.length-1]}.`
+      : '';
     document.getElementById('focusInfo').innerHTML=
-      `<h3>${m.model_name} — ${m.modal_type} ${m.reliable?'':'⚠ low N'}</h3>`+
+      `<h3>${m.model_name} ${m.reliable?'':'⚠ low N'}</h3>`+
+      `<p style="font-size:1rem">${headline} <span class="meta">(type code: ${m.modal_type})</span></p>`+
       `<div class="meta">${m.provider} · ${m.model_id} · answered w/o retry: ${Math.round(m.pct_first_attempt*100)}% · types seen: ${Object.entries(m.type_counts).map(([k,v])=>k+'×'+v).join(', ')||'—'}</div>`+
       `<ul style="font-size:.85rem">${rows}</ul>${inv}`;
   };
@@ -770,10 +839,14 @@ def write_reports(
         "csv": out / f"summary_{today}.csv",
         "paper": out / f"paper_{today}.md",
     }
-    paths["markdown"].write_text(render_markdown(stats, axes_order, baseline=baseline), encoding="utf-8")
+    paths["markdown"].write_text(
+        render_markdown(stats, axes_order, baseline=baseline, inst=inst), encoding="utf-8"
+    )
     paths["dashboard"].write_text(
         render_dashboard(stats, axes_order, baseline=baseline), encoding="utf-8"
     )
     paths["csv"].write_text(render_csv(stats, axes_order), encoding="utf-8")
-    paths["paper"].write_text(render_paper(stats, axes_order, baseline=baseline), encoding="utf-8")
+    paths["paper"].write_text(
+        render_paper(stats, axes_order, baseline=baseline, inst=inst), encoding="utf-8"
+    )
     return paths

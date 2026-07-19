@@ -3,9 +3,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from src.runner.orchestrator import _matches_only, _run_seed
+from src.instrument import load_instrument
+from src.runner.orchestrator import _matches_only, _run_seed, min_tokens_for_instrument
 
 ROOT = Path(__file__).resolve().parent.parent
+OEJTS = ROOT / "config" / "instrument" / "oejts_32.yaml"
+IPIP50 = ROOT / "config" / "instrument" / "ipip50_bigfive.yaml"
 
 
 def test_run_seed_is_deterministic_within_process():
@@ -54,3 +57,14 @@ def test_matches_only_exact_and_prefix():
     assert _matches_only("gpt-5-mini", ["gpt"])
     assert _matches_only("gpt-5-nano", ["gpt"])
     assert not _matches_only("claude-opus", ["gpt"])
+
+
+def test_min_tokens_scales_with_instrument_size():
+    """Regression test: a live smoke test against IPIP-50 (50 items) hit a
+    hard-coded 2048-token ceiling tuned for OEJTS (32 items) and came back
+    with an empty/truncated response on 2 of 12 runs. The floor must scale
+    with the instrument actually loaded, not assume OEJTS's item count."""
+    oejts = load_instrument(OEJTS)
+    ipip = load_instrument(IPIP50)
+    assert min_tokens_for_instrument(ipip) > min_tokens_for_instrument(oejts)
+    assert min_tokens_for_instrument(oejts) > 0

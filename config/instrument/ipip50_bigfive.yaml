@@ -62,13 +62,17 @@ scale:
 
 # Factor I=Extraversion, II=Agreeableness, III=Conscientiousness,
 # IV=Emotional Stability, V=Intellect/Imagination (source's own labels).
-# pole_low/pole_high are intentionally generic -- see header note above.
+# pole_low/pole_high are intentionally generic ("Lo"/"Hi") -- see header note
+# above on why the concatenated "type" string should not use trait-flavored
+# letters. trait_low/trait_high carry the actual human-readable trait names
+# for reports/dashboard, which are what should be quoted as "this model's
+# characteristics" -- never the concatenated Hi/Lo string.
 axes:
-  EXTR: { pole_low: Lo, pole_high: Hi }
-  AGRE: { pole_low: Lo, pole_high: Hi }
-  CONS: { pole_low: Lo, pole_high: Hi }
-  STAB: { pole_low: Lo, pole_high: Hi }
-  INTL: { pole_low: Lo, pole_high: Hi }
+  EXTR: { pole_low: Lo, pole_high: Hi, trait_low: Introverted, trait_high: Extraverted }
+  AGRE: { pole_low: Lo, pole_high: Hi, trait_low: "Less agreeable / more skeptical", trait_high: "Agreeable / cooperative" }
+  CONS: { pole_low: Lo, pole_high: Hi, trait_low: "Spontaneous / less organized", trait_high: "Conscientious / organized" }
+  STAB: { pole_low: Lo, pole_high: Hi, trait_low: "More reactive / anxious", trait_high: "Emotionally stable / calm" }
+  INTL: { pole_low: Lo, pole_high: Hi, trait_low: "Practical / concrete-minded", trait_high: "Intellectual / imaginative" }
 
 type_order: [EXTR, AGRE, CONS, STAB, INTL]
 
