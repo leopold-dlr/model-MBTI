@@ -81,6 +81,34 @@ def _instrument_validity_note(inst: Instrument | None) -> str:
     return f"{_instrument_label(inst)} carries its own validity limits for humans, which do not automatically transfer to an LLM."
 
 
+def _has_meaningful_type_code(s: ModelStats) -> bool:
+    """False when every axis uses the generic "Lo"/"Hi" placeholder poles
+    (e.g. IPIP-50 -- see that file's header: Big Five is dimensional, not
+    typological, so its concatenated code has no real identity, unlike
+    OEJTS's recognizable 4-letter MBTI-style codes). Showing a bare
+    "HiHiHiHiHi" as if it meant something was a direct, valid complaint --
+    this suppresses that display entirely rather than relying on wording to
+    paper over a meaningless string."""
+    if not s.axes:
+        return False
+    return not all(a.pole_low == "Lo" and a.pole_high == "Hi" for a in s.axes.values())
+
+
+def _condition_display_label(temperature_condition: str, prompt_variant: str) -> str:
+    """Plain-language label for a (temperature_condition, prompt_variant)
+    group -- the raw internal label (e.g. "fixed_t1/default") was shown
+    verbatim and unexplained, which is exactly the kind of jargon a
+    non-technical reader has no way to decode."""
+    label = (
+        "Default settings (as normally deployed)"
+        if temperature_condition == "default"
+        else "Fixed temperature (fair comparison across models)"
+    )
+    if prompt_variant != "default":
+        label += f" · prompt wording: {prompt_variant}"
+    return label
+
+
 # --------------------------------------------------------------------------- #
 # Markdown comparative report
 # --------------------------------------------------------------------------- #
@@ -128,7 +156,11 @@ def render_markdown(
 
     lines += ["## Personality profiles", ""]
     for label, group in groups:
-        cond_suffix = f" — condition `{label}`" if len(groups) > 1 else ""
+        cond_suffix = (
+            f" — {_condition_display_label(group[0].temperature_condition, group[0].prompt_variant)}"
+            if len(groups) > 1
+            else ""
+        )
         for s in group:
             lines += [f"### `{s.model_name}`{cond_suffix}", ""]
             if s.n_valid == 0:
@@ -149,25 +181,36 @@ def render_markdown(
 
     for label, group in groups:
         if len(groups) > 1:
-            lines += [f"## Comparison table — condition `{label}`", ""]
+            display_label = _condition_display_label(
+                group[0].temperature_condition, group[0].prompt_variant
+            )
+            lines += [f"## Comparison table — {display_label}", ""]
             tc = group[0].temperature_condition
             if tc == "default":
                 lines.append(
-                    "_Provider default temperature -- confounded by differing sampling "
-                    "entropy across providers; do not use this condition alone to compare "
-                    "stability ACROSS models._"
+                    "_This is how each model behaves as normally deployed. Different "
+                    "providers use different default settings, so don't use this table "
+                    "alone to compare models to each other -- see the other test setting "
+                    "below for that._"
                 )
             else:
                 lines.append(
-                    "_Fixed temperature across all models -- the controlled condition for "
-                    "cross-model stability comparison._"
+                    "_Every model was run under the same settings here -- this is the fair, "
+                    "apples-to-apples comparison across models._"
                 )
             lines.append("")
         else:
             lines += ["## Comparison table", ""]
 
-        header = "| Model | Provider | Modal type | Stability (95% CI) | Reliable | Valid |"
-        sep = "|---|---|---|---|---|---|"
+        any_type_code = any(_has_meaningful_type_code(s) for s in group)
+        if not any_type_code:
+            lines.append(
+                "_This instrument is dimensional, not typological -- there's no meaningful "
+                "4-letter code, only the trait columns below._"
+            )
+            lines.append("")
+        header = "| Model | Provider |" + (" Type code |" if any_type_code else "") + " Stability (95% CI) | Reliable | Valid |"
+        sep = "|---|---|" + ("---|" if any_type_code else "") + "---|---|---|"
         for axis in axes_order:
             header += f" {axis} |"
             sep += "---|"
@@ -175,9 +218,10 @@ def render_markdown(
 
         for s in group:
             reliable_mark = "✓" if s.reliable else "⚠ low N"
+            type_cell = f" **{s.modal_type}** |" if any_type_code else ""
             row = (
-                f"| `{s.model_name}` | {s.provider} | **{s.modal_type}** "
-                f"| {s.modal_type_freq*100:.0f}% {_fmt_ci(s.modal_type_freq_ci)} "
+                f"| `{s.model_name}` | {s.provider} |{type_cell}"
+                f" {s.modal_type_freq*100:.0f}% {_fmt_ci(s.modal_type_freq_ci)} "
                 f"| {reliable_mark} | {s.n_valid}/{s.n_total} |"
             )
             for axis in axes_order:
@@ -185,7 +229,7 @@ def render_markdown(
                 if a is None:
                     row += " — |"
                     continue
-                row += f" {a.modal_letter} ({a.modal_freq*100:.0f}%) |"
+                row += f" {a.modal_trait} ({a.modal_freq*100:.0f}%) |"
             lines.append(row)
         lines.append("")
 
@@ -198,7 +242,11 @@ def render_markdown(
         "",
     ]
     for label, group in groups:
-        cond_suffix = f" — condition `{label}`" if len(groups) > 1 else ""
+        cond_suffix = (
+            f" — {_condition_display_label(group[0].temperature_condition, group[0].prompt_variant)}"
+            if len(groups) > 1
+            else ""
+        )
         for s in group:
             lines += [f"### `{s.model_name}`{cond_suffix} — {s.provider} / `{s.model_id}`", ""]
             if s.n_valid == 0:
@@ -308,10 +356,45 @@ def _personality_paragraph(s: ModelStats, axes_order: list[str]) -> str:
                 "firm lean into that particular trait."
             )
 
+    code_note = (
+        f" (Sometimes shortened elsewhere to the code **{s.modal_type}**.)"
+        if _has_meaningful_type_code(s)
+        else ""
+    )
     return (
         f"**`{s.model_name}`** comes across as {traits_str}.{clearest_sent}{weakest_sent} "
-        f"{confidence} (Shorthand code: **{s.modal_type}**.)"
+        f"{confidence}{code_note}"
     )
+
+
+def _headline_traits(s: ModelStats, axes_order: list[str], n: int = 2) -> str:
+    """A short 2-3 word "vibe" from the model's clearest (most decisive)
+    traits -- the one thing someone should remember and be able to repeat,
+    not a data point. Picked by distance from the midpoint, same ranking
+    the full paragraph uses for its "clearest trait" sentence."""
+    axis_items = [(ax, s.axes[ax]) for ax in axes_order if ax in s.axes]
+    if not axis_items:
+        return ""
+    ranked = sorted(axis_items, key=lambda kv: kv[1].dist_from_midpoint, reverse=True)
+    return _join_names([a.modal_trait for _, a in ranked[:n]])
+
+
+def _plain_example(s: ModelStats) -> str:
+    """The single clearest example answer, stripped of item ids/axis codes/
+    percentages -- just what it said, for a card-sized glance rather than
+    the fuller per-item breakdown in the profile paragraph's example list."""
+    if not s.example_items:
+        return ""
+    phrase = s.example_items[0]["phrase"].replace("**", "")
+    return f"For example, it {phrase}."
+
+
+def _confidence_note(s: ModelStats) -> str:
+    if not s.reliable:
+        return f"Based on a small test ({s.n_valid} runs) -- a first impression, not a firm conclusion."
+    if s.modal_type_freq == 1.0:
+        return f"Consistent across all {s.n_valid} runs in this test."
+    return f"Showed up in {s.modal_type_freq*100:.0f}% of this test's runs."
 
 
 def _fmt_example_item(ex: dict) -> str:
@@ -545,9 +628,12 @@ def render_dashboard(
 
     def _model_payload(s: ModelStats) -> dict:
         d = s.to_dict()
-        d["personality_paragraph"] = (
-            _personality_paragraph(s, axes_order) if s.n_valid > 0 else None
-        )
+        has_valid = s.n_valid > 0
+        d["personality_paragraph"] = _personality_paragraph(s, axes_order) if has_valid else None
+        d["headline"] = _headline_traits(s, axes_order) if has_valid else None
+        d["plain_example"] = _plain_example(s) if has_valid else None
+        d["confidence_note"] = _confidence_note(s) if has_valid else None
+        d["has_type_code"] = _has_meaningful_type_code(s) if has_valid else False
         return d
 
     payload = {
@@ -556,6 +642,10 @@ def render_dashboard(
         "palette": PALETTE,
         "baseline": baseline,
         "condition_order": [label for label, _ in groups],
+        "condition_labels": {
+            label: _condition_display_label(group[0].temperature_condition, group[0].prompt_variant)
+            for label, group in groups
+        },
         "conditions": {label: [_model_payload(s) for s in group] for label, group in groups},
     }
     data_json = json.dumps(payload, ensure_ascii=False)
@@ -607,6 +697,10 @@ __CHARTJS_SOURCE__
   .card{border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--panel)}
   .card h3{margin:0 0 4px;font-size:1rem}
   .card .meta{color:var(--muted);font-size:.8rem;margin-bottom:10px}
+  .card .headline{font-size:1.05rem;font-weight:700;margin:2px 0 8px}
+  .card ul.traits{margin:0 0 8px;padding-left:1.1em;font-size:.88rem}
+  .card ul.traits li{margin-bottom:2px}
+  .card .example{font-size:.82rem;font-style:italic;color:var(--muted);margin:6px 0}
   canvas{max-width:100%}
   select{background:var(--panel);color:var(--text);border:1px solid var(--border);
     border-radius:8px;padding:6px 10px;font-size:.9rem;margin:8px 0 16px}
@@ -687,9 +781,13 @@ document.getElementById('subtitle').textContent =
 /* ---- condition selector (only shown if >1 condition present) ---- */
 if (CONDITIONS.length > 1) {
   const bar = document.getElementById('condBar');
-  const label = document.createElement('span'); label.textContent = 'Condition:';
+  const label = document.createElement('span'); label.textContent = 'Test setting:';
   const sel = document.createElement('select');
-  CONDITIONS.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o); });
+  CONDITIONS.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c; o.textContent = DATA.condition_labels[c] || c;
+    sel.appendChild(o);
+  });
   sel.onchange = () => { MODELS = DATA.conditions[sel.value]; renderAll(); };
   bar.appendChild(label); bar.appendChild(sel);
 }
@@ -707,21 +805,22 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
 
 /* ---- comparison table ---- */
 function buildTable(){
-  let h = '<table><thead><tr><th>Model</th><th>Provider</th><th>Type</th><th>Stability (95% CI)</th><th>Reliable</th><th>Valid</th>';
+  const anyTypeCode = MODELS.some(m=>m.has_type_code);
+  let h = '<table><thead><tr><th>Model</th><th>Provider</th>'+(anyTypeCode?'<th>Type code</th>':'')+'<th>Stability (95% CI)</th><th>Reliable</th><th>Valid</th>';
   AXES.forEach(ax=>h+=`<th>${ax}</th>`);
   h+='</tr></thead><tbody>';
   MODELS.forEach((m,i)=>{
     const stab = Math.round(m.modal_type_freq*100);
     const ci = m.modal_type_freq_ci ? `[${Math.round(m.modal_type_freq_ci[0]*100)},${Math.round(m.modal_type_freq_ci[1]*100)}]` : '';
     h+=`<tr><td>${m.model_name}</td><td>${m.provider}</td>`+
-       `<td class="type">${m.modal_type}</td>`+
+       (anyTypeCode ? `<td class="type">${m.has_type_code?m.modal_type:'—'}</td>` : '')+
        `<td><span class="bar" style="width:${stab}px;background:${color(i)}"></span> ${stab}% ${ci}</td>`+
        `<td>${m.reliable? '✓' : '⚠ low N'}</td>`+
        `<td>${m.n_valid}/${m.n_total}</td>`;
     AXES.forEach(ax=>{
       const a=m.axes[ax];
       if(!a){h+='<td>—</td>';return;}
-      h+=`<td><b>${a.modal_letter}</b> ${Math.round(a.modal_freq*100)}%</td>`;
+      h+=`<td><b>${a.modal_trait}</b> ${Math.round(a.modal_freq*100)}%</td>`;
     });
     h+='</tr>';
   });
@@ -836,11 +935,18 @@ function buildCards(){
   grid.innerHTML = '';
   MODELS.forEach((m,i)=>{
     const div=document.createElement('div');div.className='card';
-    const paragraph = mdBoldToHtml(m.personality_paragraph || 'No valid runs to build a profile from.');
+    if (m.n_valid === 0) {
+      div.innerHTML = `<h3>${m.model_name} <span style="color:${color(i)}">■</span></h3>`+
+        `<p class="meta">No valid runs to build a profile from.</p>`;
+      grid.appendChild(div);
+      return;
+    }
+    const bullets = AXES.filter(ax=>m.axes[ax]).map(ax=>`<li>${m.axes[ax].modal_trait}</li>`).join('');
     div.innerHTML=`<h3>${m.model_name} <span style="color:${color(i)}">■</span></h3>`+
-      `<div class="meta">${m.provider} · ${m.model_id}</div>`+
-      `<p style="font-size:.88rem;margin:8px 0">${paragraph}</p>`+
-      `<div class="meta">stable ${Math.round(m.modal_type_freq*100)}% ${m.reliable?'':'⚠ low N'} · valid ${m.n_valid}/${m.n_total}</div>`;
+      `<p class="headline">${m.headline || ''}</p>`+
+      `<ul class="traits">${bullets}</ul>`+
+      (m.plain_example ? `<p class="example">${m.plain_example}</p>` : '')+
+      `<p class="meta">${m.confidence_note || ''}</p>`;
     grid.appendChild(div);
   });
 }
@@ -881,10 +987,13 @@ function buildFocus(){
       `<li>Item ${ex.item_id} (${ex.axis}): it ${mdBoldToHtml(ex.phrase)} `+
       `(${ex.pct.toFixed(0)}% preference, avg. over ${ex.n} run(s)).</li>`
     ).join('');
+    const typesSeen = m.has_type_code
+      ? ` · codes seen: ${Object.entries(m.type_counts).map(([k,v])=>k+'×'+v).join(', ')||'—'}`
+      : '';
     document.getElementById('focusInfo').innerHTML=
       `<h3>${m.model_name} ${m.reliable?'':'⚠ low N'}</h3>`+
       `<p style="font-size:1rem">${paragraph}</p>`+
-      `<div class="meta">${m.provider} · ${m.model_id} · answered w/o retry: ${Math.round(m.pct_first_attempt*100)}% · types seen: ${Object.entries(m.type_counts).map(([k,v])=>k+'×'+v).join(', ')||'—'}</div>`+
+      `<div class="meta">${m.provider} · ${m.model_id} · answered w/o retry: ${Math.round(m.pct_first_attempt*100)}%${typesSeen}</div>`+
       (examples ? `<p style="font-size:.85rem;margin-top:10px"><b>Concrete examples of what it answered:</b></p><ul style="font-size:.85rem">${examples}</ul>` : '')+
       `<p style="font-size:.85rem;margin-top:10px"><b>Full per-axis detail:</b></p>`+
       `<ul style="font-size:.85rem">${rows}</ul>${inv}`;

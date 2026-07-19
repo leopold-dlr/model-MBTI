@@ -11,7 +11,14 @@ from src.report.aggregate import (
     wilson_ci,
 )
 from src.report.aggregate import _describe_item_lean
-from src.report.render import render_csv, render_dashboard, render_markdown, render_paper
+from src.report.render import (
+    _condition_display_label,
+    _has_meaningful_type_code,
+    render_csv,
+    render_dashboard,
+    render_markdown,
+    render_paper,
+)
 from src.scoring.mbti_scorer import score_answers
 
 INSTRUMENT = Path(__file__).resolve().parent.parent / "config" / "instrument" / "oejts_32.yaml"
@@ -224,6 +231,52 @@ def test_item_level_examples_picks_decisive_and_consistent_items():
     for ex in examples:
         assert set(ex) >= {"item_id", "axis", "phrase", "pct", "n"}
         assert ex["n"] == 3
+
+
+def test_type_code_suppressed_for_non_typological_instrument():
+    # OEJTS's letters (E/I, S/N, ...) are a real, recognizable typology;
+    # IPIP-50's generic "Lo"/"Hi" placeholders are not -- showing a bare
+    # "HiHiHiHiHi" as if it meant something was a direct user complaint.
+    oejts = load_instrument(INSTRUMENT)
+    oejts_stats = aggregate_all(_synthetic_records(), inst=oejts)
+    assert all(_has_meaningful_type_code(s) for s in oejts_stats if s.n_valid > 0)
+
+    ipip = load_instrument(IPIP50)
+    ext = {it.id: 5 for it in ipip.items}
+    ipip_records = [_make_record("m", ext, run_index=i, inst=ipip) for i in range(3)]
+    ipip_stats = aggregate_all(ipip_records, inst=ipip)
+    assert not any(_has_meaningful_type_code(s) for s in ipip_stats)
+
+    md = render_markdown(ipip_stats, ipip.type_order, inst=ipip)
+    assert "not typological" in md
+    assert "HiHiHiHiHi" not in md  # bare code never shown when meaningless
+
+
+def test_comparison_table_stays_contiguous_when_type_code_is_suppressed():
+    """Regression test: the "not typological" caveat was inserted between the
+    markdown table's separator row and its data rows, which breaks table
+    rendering (most renderers require header/separator/data rows to be
+    contiguous with nothing in between)."""
+    ipip = load_instrument(IPIP50)
+    ext = {it.id: 5 for it in ipip.items}
+    records = [_make_record("m", ext, run_index=i, inst=ipip) for i in range(3)]
+    stats = aggregate_all(records, inst=ipip)
+    md = render_markdown(stats, ipip.type_order, inst=ipip)
+    lines = md.splitlines()
+    sep_idx = next(i for i, line in enumerate(lines) if line.startswith("|---"))
+    assert lines[sep_idx + 1].startswith("| `m`")  # data row immediately follows
+
+
+def test_condition_labels_are_plain_language_not_raw_internal_strings():
+    # The raw internal group key (e.g. "fixed_t1/default", used for grouping
+    # in _group_by_condition) was shown to the reader unexplained -- this
+    # checks the display label is descriptive prose, not that raw token.
+    default_label = _condition_display_label("default", "default")
+    fixed_label = _condition_display_label("fixed_t1", "default")
+    assert "fixed_t1" not in default_label
+    assert "fixed_t1" not in fixed_label
+    assert default_label != fixed_label
+    assert len(fixed_label) > len("fixed_t1/default")  # actual explanation, not a passthrough
 
 
 def test_paper_and_markdown_describe_the_actual_instrument_used():
