@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from pathlib import Path
 
 try:
@@ -48,6 +49,15 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_MODELS = ROOT / "config" / "models.yaml"
 DEFAULT_SETTINGS = ROOT / "config" / "run_settings.yaml"
 DEFAULT_INSTRUMENT = ROOT / "config" / "instrument" / "oejts_32.yaml"
+
+
+def _most_common_n_total(stats) -> int | None:
+    """The N the baseline simulation should use: the most common n_total
+    across the loaded (model, condition) groups, since that's how many runs
+    this experiment actually collected -- not whatever run_settings.yaml
+    happens to say n_runs is right now."""
+    totals = [s.n_total for s in stats if s.n_total]
+    return Counter(totals).most_common(1)[0][0] if totals else None
 
 
 def _load_all(args):
@@ -97,7 +107,12 @@ def _build_reports(settings, inst, experiment_id=None):
     if experiment_id is None and used_ids:
         experiment_id = max(used_ids)
     print(f"Building reports for experiment: {experiment_id or '(no experiment_id in data)'}")
-    paths = write_reports(stats, inst.type_order, settings.report_dir, inst=inst, n_runs=settings.n_runs)
+    # Baseline must reflect how many runs were actually loaded, not the live
+    # config's current n_runs -- those silently diverge whenever run_settings
+    # is edited (e.g. lowered for a smoke test, restored afterward) and
+    # `report` is re-run against the older data without a fresh `run`.
+    n_runs_seen = _most_common_n_total(stats)
+    paths = write_reports(stats, inst.type_order, settings.report_dir, inst=inst, n_runs=n_runs_seen)
     print("Reports written:")
     for kind, p in paths.items():
         print(f"  {kind:10s} {p}")

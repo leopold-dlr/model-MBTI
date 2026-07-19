@@ -55,6 +55,19 @@ def _run_seed(base_seed: int, model_name: str, run_index: int) -> int:
     return int(digest, 16) & 0x7FFFFFFF
 
 
+def min_tokens_for_instrument(inst: Instrument) -> int:
+    """Safety-floor token budget so the reply JSON (one entry per item) isn't
+    truncated mid-generation -- config/models.yaml's per-model max_tokens is
+    tuned for OEJTS's 32 items, but "the instrument is data" means a bigger
+    questionnaire (e.g. IPIP-50's 50 items) must not silently need a manual
+    config bump just to avoid every run coming back invalid. 100 tokens/item
+    plus a fixed margin comfortably covers both the JSON itself and a model's
+    occasional extra formatting/reasoning overhead before it starts answering
+    (observed empirically: OEJTS-32 fits well under 2048 completion tokens in
+    practice, but IPIP-50 hit a 2048 ceiling exactly and came back empty)."""
+    return 512 + 100 * len(inst.items)
+
+
 def execute_single_run(
     model: ModelConfig,
     inst: Instrument,
@@ -85,6 +98,9 @@ def execute_single_run(
     call_overrides: dict = {}
     if temperature_condition.value is not None:
         call_overrides["temperature"] = temperature_condition.value
+    min_tokens = min_tokens_for_instrument(inst)
+    if model.params.get("max_tokens", 0) < min_tokens:
+        call_overrides["max_tokens"] = min_tokens
 
     record: dict = {
         "schema_version": SCHEMA_VERSION,

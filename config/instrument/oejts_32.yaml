@@ -34,12 +34,14 @@ scale:
   midpoint_label: "neutral / equally balanced between the two"
 
 # Axis definitions: pole_low is the letter credited by a LOW score, pole_high
-# by a HIGH score, on an item keyed +1.
+# by a HIGH score, on an item keyed +1. trait_low/trait_high are the
+# human-readable Jungian trait names for each pole, used in reports/dashboard
+# so results read as "Introversion" rather than a bare unexplained letter.
 axes:
-  EI: { pole_low: E, pole_high: I }
-  SN: { pole_low: S, pole_high: N }
-  TF: { pole_low: F, pole_high: T }
-  JP: { pole_low: J, pole_high: P }
+  EI: { pole_low: E, pole_high: I, trait_low: Extraversion, trait_high: Introversion }
+  SN: { pole_low: S, pole_high: N, trait_low: Sensing, trait_high: Intuition }
+  TF: { pole_low: F, pole_high: T, trait_low: Feeling, trait_high: Thinking }
+  JP: { pole_low: J, pole_high: P, trait_low: Judging, trait_high: Perceiving }
 
 # Canonical letter order used to assemble the 4-letter type string.
 type_order: [EI, SN, TF, JP]

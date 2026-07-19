@@ -6,13 +6,16 @@ from src.instrument import load_instrument
 from src.report.aggregate import (
     aggregate_all,
     cronbach_alpha,
+    item_level_examples,
     random_baseline_stats,
     wilson_ci,
 )
+from src.report.aggregate import _describe_item_lean
 from src.report.render import render_csv, render_dashboard, render_markdown, render_paper
 from src.scoring.mbti_scorer import score_answers
 
 INSTRUMENT = Path(__file__).resolve().parent.parent / "config" / "instrument" / "oejts_32.yaml"
+IPIP50 = Path(__file__).resolve().parent.parent / "config" / "instrument" / "ipip50_bigfive.yaml"
 
 
 def _make_record(
@@ -24,8 +27,9 @@ def _make_record(
     prompt_variant="default",
     experiment_id=None,
     succeeded_at_attempt=0,
+    inst=None,
 ):
-    inst = load_instrument(INSTRUMENT)
+    inst = inst or load_instrument(INSTRUMENT)
     rec = {
         "model_name": name,
         "provider": "test",
@@ -160,6 +164,93 @@ def test_random_baseline_stats_shape():
     assert 0.0 <= baseline["modal_type_freq_mean"] <= 1.0
     assert baseline["modal_type_freq_p05"] <= baseline["modal_type_freq_p95"]
     assert set(baseline["axes"]) == set(inst.type_order)
+
+
+def test_paper_explains_missing_comparison_when_all_models_unreliable():
+    """Regression test: when every model in the primary condition is below
+    min_valid_runs (e.g. a small smoke test), '## 3. Cross-model comparison'
+    used to render as a bare header with nothing under it -- silently. It
+    must instead say why no comparison is shown."""
+    inst = load_instrument(INSTRUMENT)
+    records = _synthetic_records()  # 5/4 valid runs, well below a high threshold
+    stats = aggregate_all(records, inst=inst, min_valid_runs=1000)
+    assert all(not s.reliable for s in stats if s.n_valid > 0)
+    paper = render_paper(stats, inst.type_order)
+    assert "No comparison shown" in paper
+    assert "min_valid_runs" in paper
+
+
+def test_personality_profile_and_examples_present_in_markdown():
+    inst = load_instrument(INSTRUMENT)
+    stats = aggregate_all(_synthetic_records(), inst=inst)
+    md = render_markdown(stats, inst.type_order)
+    assert "## Personality profiles" in md
+    assert "comes across as" in md
+    assert "## Comparison table" in md
+    assert "## Technical detail" in md
+    # A model with valid runs must show at least one concrete item example.
+    assert "leaned toward" in md or "called" in md
+
+
+def test_describe_item_lean_handles_genuinely_bipolar_items():
+    phrase = _describe_item_lean("Wants the details", "Wants the big picture", toward_right=True)
+    assert "Wants the big picture" in phrase
+    assert "Wants the details" in phrase
+
+
+def test_describe_item_lean_collapses_ipip_style_unipolar_wrapper():
+    # IPIP-50 items are encoded as the SAME base statement under an
+    # "inaccurate"/"accurate" qualifier (see ipip50_bigfive.yaml's header) --
+    # this must not read as a choice between two near-identical strings, and
+    # must not leak a leftover "accurate description of me:" fragment (a
+    # naive common-suffix match is fooled by "inaccurate" containing
+    # "accurate" as a substring).
+    left = "Very inaccurate description of me: Feel little concern for others."
+    right = "Very accurate description of me: Feel little concern for others."
+    phrase = _describe_item_lean(left, right, toward_right=False)
+    assert phrase == 'called "Feel little concern for others" **inaccurate** of itself'
+
+
+def test_item_level_examples_picks_decisive_and_consistent_items():
+    inst = load_instrument(INSTRUMENT)
+    # Every run identical and maximally extreme -> every item is equally
+    # decisive and consistent; just check the function returns well-formed,
+    # complete examples rather than crashing or returning partial data.
+    ext = {it.id: 5 for it in inst.items}
+    records = [_make_record("m", ext, run_index=i) for i in range(3)]
+    valid = [r for r in records if r["valid"]]
+    examples = item_level_examples(inst, valid, n=3)
+    assert len(examples) == 3
+    for ex in examples:
+        assert set(ex) >= {"item_id", "axis", "phrase", "pct", "n"}
+        assert ex["n"] == 3
+
+
+def test_paper_and_markdown_describe_the_actual_instrument_used():
+    """Regression test: render_paper/render_markdown used to hardcode
+    "OEJTS 1.2", "32-item", and "four MBTI dichotomies (E/I, S/N, T/F, J/P)"
+    regardless of which instrument was actually administered -- so a report
+    built from an IPIP-50 (Big Five) run falsely described itself as an
+    OEJTS/MBTI study. Both renderers must reflect the instrument passed in."""
+    ipip = load_instrument(IPIP50)
+    ext = {it.id: 5 for it in ipip.items}
+    records = [_make_record("m", ext, run_index=i, inst=ipip) for i in range(5)]
+    stats = aggregate_all(records, inst=ipip)
+
+    paper = render_paper(stats, ipip.type_order, inst=ipip)
+    md = render_markdown(stats, ipip.type_order, inst=ipip)
+    assert "IPIP-50-BigFive" in paper
+    assert "50 items" in paper
+    assert "OEJTS" not in paper
+    assert "32-item" not in paper
+    assert "four MBTI dichotomies" not in paper
+    assert "OEJTS" not in md
+
+    oejts = load_instrument(INSTRUMENT)
+    oejts_stats = aggregate_all(_synthetic_records(), inst=oejts)
+    oejts_paper = render_paper(oejts_stats, oejts.type_order, inst=oejts)
+    assert "OEJTS" in oejts_paper
+    assert "32 items" in oejts_paper
 
 
 def test_renders_do_not_crash():
