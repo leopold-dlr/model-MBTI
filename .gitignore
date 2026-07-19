@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Run outputs are generated; keep the folder, ignore its contents.
+data/runs/*.json
+
+# Generated reports (keep the dir, ignore generated artifacts).
+reports/*.html
+reports/comparatif_*.md
+reports/paper_*.md
+reports/summary_*.csv
